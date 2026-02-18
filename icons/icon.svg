@@ -1,0 +1,30 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="128" height="128" rx="24" fill="#FF7259"/>
+  
+  <!-- Glow effect -->
+  <defs>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- Text: AiFly -->
+  <text 
+    x="64" 
+    y="85" 
+    font-family="Arial, sans-serif" 
+    font-size="56" 
+    font-weight="bold" 
+    text-anchor="middle" 
+    fill="white"
+    filter="url(#glow)"
+  >AiFly</text>
+  
+  <!-- Decorative element - small circle for 'i' dot enhancement -->
+  <circle cx="95" cy="28" r="3" fill="white" opacity="0.8"/>
+</svg>
