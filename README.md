@@ -1,88 +1,217 @@
-# AiFly - AI Assistant Chrome Extension
+# 🚀 AiFly
 
-A lightweight Chrome extension that provides quick AI assistance through a messenger window triggered by **Alt+Space**. Powered by OpenAI ChatGPT and Google Gemini.
+Instant AI Assistant Overlay for Chrome
 
-## Features
+AiFly is a lightweight Chrome Extension that provides an instant AI chat overlay triggered by a global keyboard shortcut.
 
-✨ **Quick Access** - Press Alt+Space to open the messenger window anywhere on the web
-💬 **Dual AI Providers** - Choose between OpenAI ChatGPT and Google Gemini
-🧠 **Smart Responses** - Get concise, formatted answers with bold text and bullet points
-💊 **Medication Detection** - Automatically bolds medication names with hover popups
-📋 **Text Selection Popup** - Select any text in responses to copy or create follow-ups
-💾 **Chat History** - Automatic conversation history storage (up to 100 messages)
-🎚️ **Font Size Control** - Adjust text size for better readability
-⌨️ **Easy Close** - Press Escape or click the close button to dismiss
+Press Alt + Space from any webpage to open a fully functional AI messenger powered by ChatGPT or Google Gemini — without leaving your current context.
 
-## Installation
+## ✨ Why I Built This
 
-1. Clone or download this repository
-2. Go to `chrome://extensions/`
-3. Enable "Developer mode" (top right)
-4. Click "Load unpacked" and select this folder
-5. Set your OpenAI API key in the extension options
+Switching tabs to use AI breaks workflow and focus.
 
-## Setup
+AiFly eliminates context switching by embedding a fast, keyboard-driven AI assistant directly into the browser using:
 
-### Adding Your API Keys
+- Global hotkey detection
+- Real-time DOM injection
+- Persistent local storage
+- Multi-provider AI support
+- Smart response formatting
 
-1. Click the extension icon in Chrome toolbar
-2. Select "Options" or right-click → "Options"
-3. Choose your preferred AI provider (ChatGPT or Gemini)
-4. Enter your API key from the respective platform:
-   - **ChatGPT**: Get your key from [OpenAI API Platform](https://platform.openai.com/api-keys)
-   - **Gemini**: Get your key from [Google AI Studio](https://aistudio.google.com/app/apikey)
-5. Click Save
+The goal: Zero friction AI access anywhere on the web.
 
-### API Key Links
+## 🔥 Core Features
 
-- [OpenAI ChatGPT API Keys](https://platform.openai.com/api-keys)
-- [OpenAI Documentation](https://platform.openai.com/docs/guides/gpt)
-- [Google Gemini API Keys](https://aistudio.google.com/app/apikey)
-- [Google AI Documentation](https://ai.google.dev/docs)
+### ⚡ Global Hotkey Activation
 
-## Usage
+- Default shortcut: Alt + Space
+- Fully configurable via settings
+- Works on all URLs (<all_urls>)
+- Runs at document_start for immediate availability
+- Handles blank tabs and dynamically creates missing DOM elements
 
-- **Open**: Press `Alt+Space` on any webpage
-- **Send Message**: Type your question and press Enter or click Send
-- **Close**: Press `Escape` or click the ✕ button
-- **History**: All conversations are automatically saved
+Implementation highlights:
 
-## File Structure
+- Custom shortcut parser
+- Modifier key detection (Alt, Ctrl, Shift, Meta)
+- Escape key closes overlay
+- Event captured at global level
 
-```
-├── manifest.json      # Extension configuration
-├── background.js      # Service worker for API calls
-├── content.js         # Content script for hotkey listening
-├── messenger.css      # Styling for the messenger window
-└── README.md          # This file
-```
+### 🤖 Dual AI Provider Support
 
-## Keyboard Shortcuts
+Users can toggle between:
 
-| Shortcut  | Action                  |
-| --------- | ----------------------- |
-| Alt+Space | Toggle messenger window |
-| Escape    | Close messenger window  |
-| Enter     | Send message            |
+- OpenAI ChatGPT
+- Google Gemini
 
-## Technical Details
+Provider selection is persisted using chrome.storage.sync.
 
-- **APIs**: OpenAI GPT-3.5-turbo and Google Gemini Pro
-- **Storage**: Chrome Storage API for chat history and settings
-- **Communication**: Chrome Message Passing for background worker communication
-- **Styling**: Clean white theme with responsive design
-- **Features**:
-  - Automatic medication name detection and formatting
-  - Text selection detection with contextual popups
-  - Font size persistence across sessions
-  - Provider persistence across sessions
+Architecture:
 
-## Privacy
+- Content script handles UI
+- Background service worker performs API calls
+- Chrome message passing connects them
 
-- Chat history is stored locally in your browser
-- API requests are sent directly to OpenAI
-- No data is shared with third parties
+### 🧠 Smart Response Rendering Engine
 
-## License
+AiFly does not just display plain text. It:
 
-MIT
+- Parses Markdown-style formatting
+- Converts bullet points into styled elements
+- Renders structured tables
+- Supports highlighted text
+- Automatically bolds detected medication names
+
+Medication detection adds:
+
+- Styled <strong> formatting
+- Interactive hover popup
+- Quick “Copy” and “Follow-up” actions
+
+### 🪄 Interactive Text Selection Popup
+
+Selecting bolded text opens a contextual floating menu:
+
+- Copy selection
+- Generate follow-up query
+
+This is implemented with:
+
+- Dynamic popup positioning
+- Bounding rectangle calculations
+- Visibility state control
+- Hover timing management
+
+### 💾 Persistent Chat History
+
+- Stores up to 100 messages locally
+- Uses Chrome storage API
+- Restores history on reload
+- No external database
+- No server storage
+
+### 🎚 Customization Options
+
+Via options.html:
+
+- Choose AI provider
+- Enter API keys
+- Customize hotkey
+- Toggle medical mode
+- Reset settings
+
+API keys are stored locally using Chrome secure storage.
+
+### 🛡 Privacy Architecture
+
+AiFly does not collect any user data.
+
+From the Privacy Policy:
+
+- No server backend
+- No analytics
+- No API key collection
+- No browsing tracking
+- All data stored locally
+- API calls go directly to OpenAI or Google
+
+This was intentionally built as a client-only architecture.
+
+## 🏗 Technical Architecture
+
+- Manifest V3 Extension
+- Background service worker
+- Content script injection
+- <all_urls> permission
+- Chrome Storage API
+- ActiveTab permission
+
+Content Script Responsibilities:
+
+- Global hotkey detection
+- UI injection
+- Messenger window creation
+- Resizable modal implementation
+- Smart formatting engine
+- Text selection handling
+- DOM state management
+
+Options Page Logic:
+
+- Provider toggle UI
+- API key validation
+- Shortcut customization
+- Persistent sync storage
+
+## 📁 Project Structure
+
+AiFly/
+│
+├── manifest.json
+├── background.js
+├── content.js
+├── options.html
+├── options.js
+├── icons/
+│ ├── icon-16.png
+│ ├── icon-48.png
+│ └── icon-128.png
+├── PRIVACY_POLICY.md
+├── PUBLISH_CHECKLIST.md
+├── package.sh
+└── README.md
+
+## ⌨ Keyboard Shortcuts
+
+| Shortcut    | Action              |
+| ----------- | ------------------- |
+| Alt + Space | Toggle AI messenger |
+| Escape      | Close messenger     |
+| Enter       | Send message        |
+
+Shortcut is configurable in Options.
+
+## 🧩 Engineering Challenges Solved
+
+- Hotkey detection across all pages
+- Overlay injection into arbitrary DOM states
+- Proper z-index isolation
+- Escape handling
+- State restoration after reload
+- Provider abstraction layer
+- Local persistence without backend
+- Dynamic popup positioning
+- Styling isolation without external CSS
+
+## 🚀 Installation (Developer Mode)
+
+1. Clone repository
+2. Go to chrome://extensions
+3. Enable Developer Mode
+4. Click “Load Unpacked”
+5. Select project folder
+6. Add API key in Options
+
+## 📌 Design Goals
+
+- Zero tab switching
+- Keyboard-first interaction
+- Clean UI with minimal friction
+- No backend dependency
+- Full user privacy
+- Fast injection performance
+- Clean separation of UI and service logic
+
+## 📈 Portfolio Notes
+
+This project demonstrates:
+
+- Chrome Extension (Manifest V3) development
+- Content script architecture
+- Background service worker communication
+- DOM injection strategy
+- Local persistence
+- API abstraction
+- Interactive UI state management
+- Security-conscious client-side architecture
+- UX-driven product thinking
