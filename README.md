@@ -143,24 +143,6 @@ Options Page Logic:
 - Shortcut customization
 - Persistent sync storage
 
-## 📁 Project Structure
-
-AiFly/
-│
-├── manifest.json
-├── background.js
-├── content.js
-├── options.html
-├── options.js
-├── icons/
-│ ├── icon-16.png
-│ ├── icon-48.png
-│ └── icon-128.png
-├── PRIVACY_POLICY.md
-├── PUBLISH_CHECKLIST.md
-├── package.sh
-└── README.md
-
 ## ⌨ Keyboard Shortcuts
 
 | Shortcut    | Action              |
