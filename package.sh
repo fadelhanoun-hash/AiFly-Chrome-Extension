@@ -34,6 +34,7 @@ cp background.js "$TEMP_DIR/"
 cp content.js "$TEMP_DIR/"
 cp options.html "$TEMP_DIR/"
 cp options.js "$TEMP_DIR/"
+cp messenger.css "$TEMP_DIR/"
 
 # Copy icons
 cp -r icons "$TEMP_DIR/"
@@ -67,6 +68,7 @@ if [ -f "$OUTPUT_FILE" ]; then
     echo "  ✓ content.js"
     echo "  ✓ options.html"
     echo "  ✓ options.js"
+    echo "  ✓ messenger.css"
     echo "  ✓ icons/ (icon-16.png, icon-48.png, icon-128.png)"
     echo "  ✓ README.md"
     echo "  ✓ PRIVACY_POLICY.md"

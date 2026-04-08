@@ -113,6 +113,56 @@
       margin-top: 6px;
     }
 
+    .key-row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .key-row input[type="password"] {
+      flex: 1;
+    }
+
+    .btn-test {
+      flex: 0 0 auto;
+      background: #198754;
+      color: white;
+      padding: 10px 12px;
+      border-radius: 6px;
+      border: none;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      white-space: nowrap;
+    }
+
+    .btn-test:hover {
+      background: #157347;
+    }
+
+    .btn-test:disabled {
+      opacity: 0.65;
+      cursor: not-allowed;
+    }
+
+    .test-status {
+      margin-top: 8px;
+      font-size: 12px;
+      color: #6c757d;
+      min-height: 16px;
+    }
+
+    .test-status.success {
+      color: #155724;
+      font-weight: 600;
+    }
+
+    .test-status.error {
+      color: #721c24;
+      font-weight: 600;
+    }
+
     .button-group {
       display: flex;
       gap: 12px;
@@ -231,6 +281,7 @@
       <div class="toggle-group">
         <button class="toggle-btn active" data-provider="chatgpt">ChatGPT</button>
         <button class="toggle-btn" data-provider="gemini">Google Gemini</button>
+        <button class="toggle-btn" data-provider="openevidence">Open Evidence</button>
       </div>
       <input type="hidden" id="provider" value="chatgpt">
     </div>
@@ -260,8 +311,12 @@
       </div>
       <div class="form-group">
         <label for="chatgpt-key">OpenAI API Key</label>
-        <input type="password" id="chatgpt-key" placeholder="sk-...">
+        <div class="key-row">
+          <input type="password" id="chatgpt-key" placeholder="sk-...">
+          <button class="btn-test" id="test-chatgpt" type="button">Test</button>
+        </div>
         <div class="helper-text">Your API key will be stored securely in your browser</div>
+        <div class="test-status" id="test-chatgpt-status"></div>
       </div>
     </div>
 
@@ -277,8 +332,32 @@
       </div>
       <div class="form-group">
         <label for="gemini-key">Gemini API Key</label>
-        <input type="password" id="gemini-key" placeholder="AIzaSy...">
+        <div class="key-row">
+          <input type="password" id="gemini-key" placeholder="AIzaSy...">
+          <button class="btn-test" id="test-gemini" type="button">Test</button>
+        </div>
         <div class="helper-text">Your API key will be stored securely in your browser</div>
+        <div class="test-status" id="test-gemini-status"></div>
+      </div>
+    </div>
+
+    <div class="section" id="openevidence-section" style="display: none;">
+      <div class="section-title">Open Evidence</div>
+      <div class="info-box">
+        <strong>Get started with Open Evidence API:</strong>
+        <div class="api-links">
+          <a href="https://www.openevidence.com/" target="_blank" class="api-link-btn">Official Site</a>
+          <a href="https://docs.openevidence.com/" target="_blank" class="api-link-btn">Documentation</a>
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="openevidence-key">Open Evidence API Key</label>
+        <div class="key-row">
+          <input type="password" id="openevidence-key" placeholder="oe_...">
+          <button class="btn-test" id="test-openevidence" type="button">Test</button>
+        </div>
+        <div class="helper-text">Medical AI with evidence-based responses. Your API key will be stored securely.</div>
+        <div class="test-status" id="test-openevidence-status"></div>
       </div>
     </div>
 
