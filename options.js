@@ -2,19 +2,23 @@
 const providerBtns = document.querySelectorAll('[data-provider]');
 const chatgptSection = document.getElementById('chatgpt-section');
 const geminiSection = document.getElementById('gemini-section');
-const openevidenceSection = document.getElementById('openevidence-section');
+const pubmedSection = document.getElementById('pubmed-section');
 const providerInput = document.getElementById('provider');
 const statusDiv = document.getElementById('status');
 const shortcutInput = document.getElementById('shortcut');
+const disabledUrlInput = document.getElementById('disabled-url');
+const disabledUrlStatus = document.getElementById('disabled-url-status');
+const disabledList = document.getElementById('disabled-list');
+let disabledRules = [];
 const testButtons = {
   chatgpt: document.getElementById('test-chatgpt'),
   gemini: document.getElementById('test-gemini'),
-  openevidence: document.getElementById('test-openevidence')
+  pubmed: document.getElementById('test-pubmed')
 };
 const testStatus = {
   chatgpt: document.getElementById('test-chatgpt-status'),
   gemini: document.getElementById('test-gemini-status'),
-  openevidence: document.getElementById('test-openevidence-status')
+  pubmed: document.getElementById('test-pubmed-status')
 };
 
 function setTestStatus(provider, message, type = '') {
@@ -27,7 +31,7 @@ function setTestStatus(provider, message, type = '') {
 function getProviderKey(provider) {
   if (provider === 'chatgpt') return document.getElementById('chatgpt-key').value.trim();
   if (provider === 'gemini') return document.getElementById('gemini-key').value.trim();
-  if (provider === 'openevidence') return document.getElementById('openevidence-key').value.trim();
+  if (provider === 'pubmed') return document.getElementById('pubmed-key').value.trim();
   return '';
 }
 
@@ -67,8 +71,8 @@ Object.entries(testButtons).forEach(([provider, btn]) => {
 });
 
 // Load settings from sync storage (persists permanently and across devices)
-chrome.storage.sync.get(['provider', 'chatgpt_key', 'gemini_key', 'openevidence_key', 'shortcut'], (result) => {
-  const provider = result.provider || 'chatgpt';
+chrome.storage.sync.get(['provider', 'chatgpt_key', 'gemini_key', 'pubmed_key', 'openevidence_key', 'shortcut', 'disabledRules'], (result) => {
+  const provider = result.provider === 'openevidence' ? 'pubmed' : (result.provider || 'chatgpt');
   providerInput.value = provider;
 
   shortcutInput.value = result.shortcut || 'Alt+Space';
@@ -79,11 +83,106 @@ chrome.storage.sync.get(['provider', 'chatgpt_key', 'gemini_key', 'openevidence_
   if (result.gemini_key) {
     document.getElementById('gemini-key').value = result.gemini_key;
   }
-  if (result.openevidence_key) {
-    document.getElementById('openevidence-key').value = result.openevidence_key;
+  if (result.pubmed_key || result.openevidence_key) {
+    document.getElementById('pubmed-key').value = result.pubmed_key || result.openevidence_key;
   }
+  disabledRules = Array.isArray(result.disabledRules) ? result.disabledRules : [];
+  renderDisabledRules();
   
   updateUI(provider);
+});
+
+function parseRuleInput(type) {
+  const raw = disabledUrlInput.value.trim();
+  if (!raw) throw new Error('Enter a website or webpage address.');
+
+  let url;
+  try {
+    url = new URL(/^[a-z][a-z\d+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`);
+  } catch (_) {
+    throw new Error('Enter a valid website or webpage address.');
+  }
+
+  if (!['http:', 'https:'].includes(url.protocol) || !url.hostname) {
+    throw new Error('Only HTTP and HTTPS addresses are supported.');
+  }
+
+  if (type === 'site') {
+    return { type, value: url.hostname.toLowerCase().replace(/^www\./, '') };
+  }
+
+  url.hash = '';
+  return { type, value: url.href };
+}
+
+function renderDisabledRules() {
+  disabledList.replaceChildren();
+
+  if (!disabledRules.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty-list';
+    empty.textContent = 'AiFly is enabled on all websites.';
+    disabledList.appendChild(empty);
+    return;
+  }
+
+  disabledRules.forEach((rule, index) => {
+    const row = document.createElement('div');
+    row.className = 'disabled-rule';
+
+    const type = document.createElement('span');
+    type.className = 'rule-type';
+    type.textContent = rule.type === 'site' ? 'Website' : 'Webpage';
+
+    const value = document.createElement('span');
+    value.className = 'rule-value';
+    value.textContent = rule.value;
+
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'btn-remove-rule';
+    remove.textContent = 'Remove';
+    remove.addEventListener('click', () => {
+      disabledRules.splice(index, 1);
+      persistDisabledRules('Rule removed. Refresh an open page to apply the change.');
+    });
+
+    row.append(type, value, remove);
+    disabledList.appendChild(row);
+  });
+}
+
+function persistDisabledRules(message) {
+  chrome.storage.sync.set({ disabledRules }, () => {
+    renderDisabledRules();
+    disabledUrlStatus.textContent = message;
+    disabledUrlStatus.className = 'test-status success';
+  });
+}
+
+function addDisabledRule(type) {
+  try {
+    const rule = parseRuleInput(type);
+    const duplicate = disabledRules.some(item => item.type === rule.type && item.value === rule.value);
+    if (duplicate) throw new Error('That rule is already in the list.');
+
+    disabledRules.push(rule);
+    disabledRules.sort((a, b) => a.type.localeCompare(b.type) || a.value.localeCompare(b.value));
+    disabledUrlInput.value = '';
+    persistDisabledRules('Rule added. Refresh an open page to disable AiFly there.');
+  } catch (error) {
+    disabledUrlStatus.textContent = error.message;
+    disabledUrlStatus.className = 'test-status error';
+  }
+}
+
+document.getElementById('add-website').addEventListener('click', () => addDisabledRule('site'));
+document.getElementById('add-webpage').addEventListener('click', () => addDisabledRule('page'));
+disabledUrlInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    addDisabledRule('site');
+  }
 });
 
 // Provider toggle
@@ -106,15 +205,15 @@ function updateUI(provider) {
   if (provider === 'chatgpt') {
     chatgptSection.style.display = 'block';
     geminiSection.style.display = 'none';
-    openevidenceSection.style.display = 'none';
+    pubmedSection.style.display = 'none';
   } else if (provider === 'gemini') {
     chatgptSection.style.display = 'none';
     geminiSection.style.display = 'block';
-    openevidenceSection.style.display = 'none';
-  } else if (provider === 'openevidence') {
+    pubmedSection.style.display = 'none';
+  } else if (provider === 'pubmed') {
     chatgptSection.style.display = 'none';
     geminiSection.style.display = 'none';
-    openevidenceSection.style.display = 'block';
+    pubmedSection.style.display = 'block';
   }
 }
 
@@ -123,7 +222,7 @@ document.getElementById('save').addEventListener('click', () => {
   const provider = providerInput.value;
   const chatgptKey = document.getElementById('chatgpt-key').value.trim();
   const geminiKey = document.getElementById('gemini-key').value.trim();
-  const openevidenceKey = document.getElementById('openevidence-key').value.trim();
+  const pubmedKey = document.getElementById('pubmed-key').value.trim();
   const shortcut = shortcutInput.value.trim() || 'Alt+Space';
 
   if (provider === 'chatgpt' && !chatgptKey) {
@@ -136,16 +235,11 @@ document.getElementById('save').addEventListener('click', () => {
     return;
   }
 
-  if (provider === 'openevidence' && !openevidenceKey) {
-    showStatus('Please enter your Open Evidence API key', 'error');
-    return;
-  }
-
   chrome.storage.sync.set({
     provider,
     chatgpt_key: chatgptKey,
     gemini_key: geminiKey,
-    openevidence_key: openevidenceKey,
+    pubmed_key: pubmedKey,
     shortcut
   }, () => {
     showStatus('✓ Settings saved permanently! 💾', 'success');
@@ -157,7 +251,7 @@ document.getElementById('save').addEventListener('click', () => {
 document.getElementById('reset').addEventListener('click', () => {
   document.getElementById('chatgpt-key').value = '';
   document.getElementById('gemini-key').value = '';
-  document.getElementById('openevidence-key').value = '';
+  document.getElementById('pubmed-key').value = '';
   shortcutInput.value = 'Alt+Space';
   showStatus('Fields cleared', 'success');
   setTimeout(() => statusDiv.classList.remove('success'), 2000);

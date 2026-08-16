@@ -7,6 +7,8 @@ if (chrome.commands && chrome.commands.onCommand) {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!tab || !tab.id) return;
+      const { disabledRules = [] } = await chrome.storage.sync.get('disabledRules');
+      if (isDisabledForUrl(tab.url, disabledRules)) return;
       // Send to the top frame (frameId 0) of the active tab
       await chrome.tabs.sendMessage(tab.id, { type: 'OPEN_MESSENGER' }, { frameId: 0 });
     } catch (e) {
@@ -16,6 +18,35 @@ if (chrome.commands && chrome.commands.onCommand) {
       }
       console.error('Open assistant command failed:', e);
     }
+  });
+}
+
+function isDisabledForUrl(urlString, rules) {
+  let url;
+  try {
+    url = new URL(urlString);
+  } catch (_) {
+    return false;
+  }
+
+  const hostname = url.hostname.toLowerCase().replace(/^www\./, '');
+  const pageUrl = `${url.origin}${url.pathname}${url.search}`;
+
+  return (Array.isArray(rules) ? rules : []).some((rule) => {
+    if (!rule || !rule.type || !rule.value) return false;
+    if (rule.type === 'site') {
+      const blockedHost = String(rule.value).toLowerCase().replace(/^www\./, '');
+      return hostname === blockedHost || hostname.endsWith(`.${blockedHost}`);
+    }
+    if (rule.type === 'page') {
+      try {
+        const blockedUrl = new URL(rule.value);
+        return pageUrl === `${blockedUrl.origin}${blockedUrl.pathname}${blockedUrl.search}`;
+      } catch (_) {
+        return false;
+      }
+    }
+    return false;
   });
 }
 
@@ -46,7 +77,54 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     });
     return true;
   }
+
+  if (request.type === 'FETCH_IMAGE_AS_DATA_URL') {
+    fetchImageAsDataUrl(request.imageUrl).then((dataUrl) => {
+      sendResponse({ success: true, dataUrl });
+    }).catch((error) => {
+      sendResponse({ success: false, error: error.message });
+    });
+    return true;
+  }
 });
+
+async function fetchImageAsDataUrl(imageUrl) {
+  if (!imageUrl) throw new Error('Image URL is required.');
+
+  const response = await fetchWithTimeout(imageUrl, {
+    method: 'GET',
+    headers: {
+      'Accept': 'image/*,*/*;q=0.8'
+    }
+  }, 15000);
+
+  if (!response.ok) {
+    throw new Error(`Image fetch failed (HTTP ${response.status}).`);
+  }
+
+  const blob = await response.blob();
+  if (!blob || !blob.type || !blob.type.startsWith('image/')) {
+    throw new Error('Fetched resource is not an image.');
+  }
+
+  const dataUrl = await blobToDataUrl(blob);
+  return dataUrl;
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result);
+      } else {
+        reject(new Error('Failed to encode image data.'));
+      }
+    };
+    reader.onerror = () => reject(new Error('Failed to read image blob.'));
+    reader.readAsDataURL(blob);
+  });
+}
 
 async function searchImages(query) {
   if (!query) throw new Error('No search query provided.');
@@ -92,6 +170,20 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 12000) {
   }
 }
 
+const DEFAULT_PUBMED_API_KEY = '2fecec3e1f74d131a676e449a8a89f27fb09';
+const PUBMED_BASE_URL = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils';
+
+function getPubMedApiKey(apiKey) {
+  const key = (apiKey || '').trim();
+  return key || DEFAULT_PUBMED_API_KEY;
+}
+
+function buildPubMedQuery(message) {
+  return String(message || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 async function testAIConnection(provider, apiKey) {
   if (!apiKey) {
     return { success: false, error: 'API key is required.' };
@@ -124,42 +216,34 @@ async function testAIConnection(provider, apiKey) {
     return { success: false, error: errorData.error?.message || `Gemini request failed (HTTP ${response.status}).` };
   }
 
-  if (provider === 'openevidence') {
-    const response = await fetchWithTimeout('https://api.openevidence.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: 'openevidence-1',
-        messages: [{ role: 'user', content: 'Connection test' }],
-        max_tokens: 16,
-        temperature: 0
-      })
-    });
+  if (provider === 'pubmed') {
+    const key = getPubMedApiKey(apiKey);
+    const response = await fetchWithTimeout(
+      `${PUBMED_BASE_URL}/einfo.fcgi?db=pubmed&retmode=json&api_key=${encodeURIComponent(key)}`,
+      { method: 'GET' }
+    );
 
     if (response.ok) {
-      return { success: true, message: 'Open Evidence connection successful.' };
+      return { success: true, message: 'PubMed connection successful.' };
     }
 
-    const errorData = await response.json().catch(() => ({}));
-    return { success: false, error: errorData.error?.message || `Open Evidence request failed (HTTP ${response.status}).` };
+    const errorText = await response.text().catch(() => '');
+    return { success: false, error: errorText || `PubMed request failed (HTTP ${response.status}).` };
   }
 
   return { success: false, error: 'Unsupported provider.' };
 }
 
 async function getAIResponse(message, history = []) {
-  const data = await chrome.storage.sync.get(['provider', 'chatgpt_key', 'gemini_key', 'openevidence_key', 'jama_key']);
-  const provider = data.provider || 'chatgpt';
+  const data = await chrome.storage.sync.get(['provider', 'chatgpt_key', 'gemini_key', 'pubmed_key', 'openevidence_key', 'jama_key']);
+  const provider = data.provider === 'openevidence' ? 'pubmed' : (data.provider || 'chatgpt');
 
   if (provider === 'chatgpt') {
     return await getChatGPTResponse(message, data.chatgpt_key, history);
   } else if (provider === 'gemini') {
     return await getGeminiResponse(message, data.gemini_key, history);
-  } else if (provider === 'openevidence') {
-    return await getOpenEvidenceResponse(message, data.openevidence_key, history);
+  } else if (provider === 'pubmed') {
+    return await getPubMedResponse(message, data.pubmed_key || data.openevidence_key, history);
   } else if (provider === 'jama') {
     return await getJamaResponse(message, data.jama_key, history);
   }
@@ -171,7 +255,7 @@ async function getJamaResponse(message, apiKey, history = []) {
   }
 
   // Placeholder behavior: JAMA does not expose a public chat-completions API.
-  return '⚠️ JAMA engine is selected, but no public JAMA conversational API endpoint is available in this build. Switch to ChatGPT, Gemini, or OpenEvidence.';
+  return '⚠️ JAMA engine is selected, but no public JAMA conversational API endpoint is available in this build. Switch to ChatGPT, Gemini, or PubMed.';
 }
 
 async function getChatGPTResponse(message, apiKey, history = []) {
@@ -281,62 +365,59 @@ async function getGeminiResponse(message, apiKey, history = []) {
   }
 }
 
-async function getOpenEvidenceResponse(message, apiKey, history = []) {
-  if (!apiKey) {
-    return "⚠️ Please set your Open Evidence API key in the extension settings.";
+async function getPubMedResponse(message, apiKey, history = []) {
+  const _ = history; // Reserved for future query refinement from conversation context.
+  const query = buildPubMedQuery(message);
+  if (!query) {
+    return '⚠️ Please enter a medical query to search PubMed.';
   }
 
+  const key = getPubMedApiKey(apiKey);
+
   try {
-    // Build conversation history - get last 10 messages for context
-    const recentHistory = history.slice(-10);
-    const messages = [
-      {
-        role: 'system',
-        content: 'You are an evidence-based medical AI assistant. Provide accurate, clinically relevant information with citations when possible. Format responses with **bold** for key medical terms, ==highlight== for critical information (doses, warnings), use bullet points for clarity, and tables for comparisons. Be concise but thorough for medical queries.'
-      }
-    ];
-
-    // Add conversation history
-    recentHistory.forEach(msg => {
-      messages.push({
-        role: msg.role === 'user' ? 'user' : 'assistant',
-        content: msg.content
-      });
-    });
-
-    // Add current message
-    messages.push({
-      role: 'user',
-      content: message
-    });
-
-    // Open Evidence API endpoint - this follows a ChatGPT-like structure
-    // Note: Adjust the endpoint URL based on Open Evidence's actual API documentation
-    const response = await fetch('https://api.openevidence.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: 'openevidence-1',
-        messages: messages,
-        temperature: 0.3, // Lower temperature for medical accuracy
-        max_tokens: 800
-      })
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      const errorMsg = errorData.error?.message || `HTTP ${response.status}`;
-      throw new Error(`Open Evidence API Error: ${errorMsg}`);
+    const searchUrl = `${PUBMED_BASE_URL}/esearch.fcgi?db=pubmed&retmode=json&retmax=6&sort=relevance&term=${encodeURIComponent(query)}&api_key=${encodeURIComponent(key)}`;
+    const searchResp = await fetchWithTimeout(searchUrl, { method: 'GET' });
+    if (!searchResp.ok) {
+      throw new Error(`PubMed ESearch failed (HTTP ${searchResp.status})`);
     }
 
-    const result = await response.json();
-    return result.choices[0].message.content;
+    const searchData = await searchResp.json();
+    const ids = searchData?.esearchresult?.idlist || [];
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return `No PubMed articles found for: **${query}**`;
+    }
+
+    const summaryUrl = `${PUBMED_BASE_URL}/esummary.fcgi?db=pubmed&retmode=json&id=${encodeURIComponent(ids.join(','))}&api_key=${encodeURIComponent(key)}`;
+    const summaryResp = await fetchWithTimeout(summaryUrl, { method: 'GET' });
+    if (!summaryResp.ok) {
+      throw new Error(`PubMed ESummary failed (HTTP ${summaryResp.status})`);
+    }
+
+    const summaryData = await summaryResp.json();
+    const uids = summaryData?.result?.uids || [];
+    const lines = [];
+
+    uids.slice(0, 5).forEach((uid, index) => {
+      const item = summaryData.result[uid] || {};
+      const title = String(item.title || 'Untitled').replace(/\s+/g, ' ').trim();
+      const journal = String(item.fulljournalname || item.source || 'Unknown journal').trim();
+      const pubdate = String(item.pubdate || '').trim();
+      const link = `https://pubmed.ncbi.nlm.nih.gov/${uid}/`;
+
+      lines.push(
+        `${index + 1}. **${title}**\n- Journal: ${journal}${pubdate ? ` (${pubdate})` : ''}\n- PMID: ${uid}\n- Link: ${link}`
+      );
+    });
+
+    return [
+      `Top PubMed results for **${query}**:`,
+      '',
+      lines.join('\n\n'),
+      '',
+      'Tip: refine your query with terms like trial type, population, or year range (example: `diabetes metformin randomized controlled trial 2022:2026[dp]`).'
+    ].join('\n');
   } catch (error) {
-    console.error('Open Evidence Error:', error);
+    console.error('PubMed Error:', error);
     return `❌ ${error.message}`;
   }
 }
-

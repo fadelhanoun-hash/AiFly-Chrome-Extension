@@ -1,0 +1,288 @@
+{
+  "builtTestProducts" : [
+
+  ],
+  "copyCommands" : {
+
+  },
+  "explicitTargetDependencyImportCheckingMode" : {
+    "none" : {
+
+    }
+  },
+  "generatedSourceTargetSet" : [
+
+  ],
+  "pluginDescriptions" : [
+
+  ],
+  "swiftCommands" : {
+    "C.AiFlyMac-arm64-apple-macosx-release.module" : {
+      "executable" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "fileList" : "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/release/AiFlyMac.build/sources",
+      "importPath" : "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/release/Modules",
+      "inputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/Sources/AiFlyMac/AiFlyMacApp.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/Sources/AiFlyMac/Models.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/Sources/AiFlyMac/Services.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/Sources/AiFlyMac/Views.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/release/swift-version--58304C5D6DBC2206.txt"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/release/AiFlyMac.build/sources"
+        }
+      ],
+      "isLibrary" : false,
+      "moduleName" : "AiFlyMac",
+      "moduleOutputPath" : "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/release/Modules/AiFlyMac.swiftmodule",
+      "objects" : [
+        "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/release/AiFlyMac.build/AiFlyMacApp.swift.o",
+        "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/release/AiFlyMac.build/Models.swift.o",
+        "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/release/AiFlyMac.build/Services.swift.o",
+        "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/release/AiFlyMac.build/Views.swift.o"
+      ],
+      "otherArguments" : [
+        "-target",
+        "arm64-apple-macosx13.0",
+        "-whole-module-optimization",
+        "-num-threads",
+        "8",
+        "-serialize-diagnostics",
+        "-O",
+        "-j8",
+        "-DSWIFT_PACKAGE",
+        "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+        "-module-cache-path",
+        "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/release/ModuleCache",
+        "-parseable-output",
+        "-Xfrontend",
+        "-entry-point-function-name",
+        "-Xfrontend",
+        "AiFlyMac_main",
+        "-swift-version",
+        "5",
+        "-plugin-path",
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+        "-sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-I",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-L",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-g",
+        "-Xcc",
+        "-isysroot",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-Xcc",
+        "-fPIC",
+        "-Xcc",
+        "-g",
+        "-package-name",
+        "aiflymac"
+      ],
+      "outputFileMapPath" : "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/release/AiFlyMac.build/output-file-map.json",
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/release/AiFlyMac.build/AiFlyMacApp.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/release/AiFlyMac.build/Models.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/release/AiFlyMac.build/Services.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/release/AiFlyMac.build/Views.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/release/Modules/AiFlyMac.swiftmodule"
+        }
+      ],
+      "prepareForIndexing" : false,
+      "sources" : [
+        "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/Sources/AiFlyMac/AiFlyMacApp.swift",
+        "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/Sources/AiFlyMac/Models.swift",
+        "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/Sources/AiFlyMac/Services.swift",
+        "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/Sources/AiFlyMac/Views.swift"
+      ],
+      "tempsPath" : "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/release/AiFlyMac.build",
+      "wholeModuleOptimization" : true
+    }
+  },
+  "swiftFrontendCommands" : {
+
+  },
+  "swiftTargetScanArgs" : {
+    "AiFlyMac" : [
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "-module-name",
+      "AiFlyMac",
+      "-package-name",
+      "aiflymac",
+      "-c",
+      "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/Sources/AiFlyMac/AiFlyMacApp.swift",
+      "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/Sources/AiFlyMac/Models.swift",
+      "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/Sources/AiFlyMac/Services.swift",
+      "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/Sources/AiFlyMac/Views.swift",
+      "-I",
+      "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/release/Modules",
+      "-target",
+      "arm64-apple-macosx13.0",
+      "-whole-module-optimization",
+      "-num-threads",
+      "8",
+      "-serialize-diagnostics",
+      "-O",
+      "-j8",
+      "-DSWIFT_PACKAGE",
+      "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+      "-module-cache-path",
+      "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/release/ModuleCache",
+      "-parseable-output",
+      "-Xfrontend",
+      "-entry-point-function-name",
+      "-Xfrontend",
+      "AiFlyMac_main",
+      "-swift-version",
+      "5",
+      "-plugin-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+      "-sdk",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-I",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-L",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-g",
+      "-Xcc",
+      "-isysroot",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-Xcc",
+      "-fPIC",
+      "-Xcc",
+      "-g",
+      "-package-name",
+      "aiflymac",
+      "-driver-use-frontend-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+    ]
+  },
+  "targetDependencyMap" : {
+    "AiFlyMac" : [
+
+    ]
+  },
+  "testDiscoveryCommands" : {
+
+  },
+  "testEntryPointCommands" : {
+
+  },
+  "traitConfiguration" : {
+    "default" : {
+
+    }
+  },
+  "writeCommands" : {
+    "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/release/AiFlyMac.build/sources" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<sources-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/Sources/AiFlyMac/AiFlyMacApp.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/Sources/AiFlyMac/Models.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/Sources/AiFlyMac/Services.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/Sources/AiFlyMac/Views.swift"
+        }
+      ],
+      "outputFilePath" : "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/release/AiFlyMac.build/sources"
+    },
+    "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/release/AiFlyMac.product/Objects.LinkFileList" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<link-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/release/AiFlyMac.build/AiFlyMacApp.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/release/AiFlyMac.build/Models.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/release/AiFlyMac.build/Services.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/release/AiFlyMac.build/Views.swift.o"
+        }
+      ],
+      "outputFilePath" : "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/release/AiFlyMac.product/Objects.LinkFileList"
+    },
+    "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/release/swift-version--58304C5D6DBC2206.txt" : {
+      "alwaysOutOfDate" : true,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<swift-get-version>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+        }
+      ],
+      "outputFilePath" : "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/release/swift-version--58304C5D6DBC2206.txt"
+    }
+  }
+}

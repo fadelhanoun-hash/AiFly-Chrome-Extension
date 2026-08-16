@@ -49,8 +49,9 @@ echo ""
 
 # Create the zip file
 echo "⏳ Creating zip archive..."
+cd "$TEMP_DIR"
+zip -q -r "$OUTPUT_FILE" . 2>&1
 cd "$SCRIPT_DIR"
-zip -q -r "$OUTPUT_FILE" -x "AiFly_*.zip" ".git/*" "node_modules/*" ".DS_Store" ".temp_package/*" "*.pyc" "create_icons.py" "*.py" >> /dev/null 2>&1
 
 # Check if zip was created successfully
 if [ -f "$OUTPUT_FILE" ]; then

@@ -264,6 +264,97 @@
       font-size: 14px;
     }
 
+    .exclusion-form {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .exclusion-form input {
+      min-width: 0;
+    }
+
+    .btn-add-rule {
+      flex: none;
+      padding: 10px 12px;
+      background: #f1f3f5;
+      color: #212529;
+      white-space: nowrap;
+    }
+
+    .btn-add-rule:hover {
+      background: #e2e6ea;
+    }
+
+    .disabled-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 16px;
+    }
+
+    .disabled-rule {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border: 1px solid #e9ecef;
+      border-radius: 7px;
+      background: #f8f9fa;
+    }
+
+    .rule-type {
+      flex: none;
+      padding: 3px 7px;
+      border-radius: 999px;
+      background: #e7f3ff;
+      color: #0056b3;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .rule-value {
+      flex: 1;
+      min-width: 0;
+      overflow-wrap: anywhere;
+      color: #343a40;
+      font-family: monospace;
+      font-size: 12px;
+    }
+
+    .btn-remove-rule {
+      flex: none;
+      padding: 5px 9px;
+      background: transparent;
+      color: #b02a37;
+      border: 1px solid #f1aeb5;
+      font-size: 12px;
+    }
+
+    .btn-remove-rule:hover {
+      background: #f8d7da;
+    }
+
+    .empty-list {
+      padding: 14px;
+      border: 1px dashed #ced4da;
+      border-radius: 7px;
+      color: #6c757d;
+      font-size: 13px;
+      text-align: center;
+    }
+
+    @media (max-width: 600px) {
+      .exclusion-form {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .exclusion-form input {
+        grid-column: 1 / -1;
+      }
+    }
+
     hr {
       border: none;
       border-top: 1px solid #e9ecef;
@@ -281,7 +372,7 @@
       <div class="toggle-group">
         <button class="toggle-btn active" data-provider="chatgpt">ChatGPT</button>
         <button class="toggle-btn" data-provider="gemini">Google Gemini</button>
-        <button class="toggle-btn" data-provider="openevidence">Open Evidence</button>
+        <button class="toggle-btn" data-provider="pubmed">PubMed</button>
       </div>
       <input type="hidden" id="provider" value="chatgpt">
     </div>
@@ -295,6 +386,23 @@
         <input type="text" id="shortcut" placeholder="Alt+Space">
         <div class="helper-text">Use modifiers like Ctrl, Alt, Shift, or Cmd. Example: Ctrl+Shift+K</div>
       </div>
+    </div>
+
+    <hr>
+
+    <div class="section">
+      <div class="section-title">Disabled websites &amp; webpages</div>
+      <div class="form-group">
+        <label for="disabled-url">Website address or webpage URL</label>
+        <div class="exclusion-form">
+          <input type="text" id="disabled-url" placeholder="example.com or https://example.com/page">
+          <button class="btn-add-rule" id="add-website" type="button">Add website</button>
+          <button class="btn-add-rule" id="add-webpage" type="button">Add webpage</button>
+        </div>
+        <div class="helper-text">Website rules disable AiFly across that domain and its subdomains. Webpage rules disable only the exact page.</div>
+        <div class="test-status" id="disabled-url-status"></div>
+      </div>
+      <div id="disabled-list" class="disabled-list"></div>
     </div>
 
     <hr>
@@ -341,23 +449,23 @@
       </div>
     </div>
 
-    <div class="section" id="openevidence-section" style="display: none;">
-      <div class="section-title">Open Evidence</div>
+    <div class="section" id="pubmed-section" style="display: none;">
+      <div class="section-title">PubMed (NCBI E-utilities)</div>
       <div class="info-box">
-        <strong>Get started with Open Evidence API:</strong>
+        <strong>Get started with PubMed API:</strong>
         <div class="api-links">
-          <a href="https://www.openevidence.com/" target="_blank" class="api-link-btn">Official Site</a>
-          <a href="https://docs.openevidence.com/" target="_blank" class="api-link-btn">Documentation</a>
+          <a href="https://pubmed.ncbi.nlm.nih.gov/" target="_blank" class="api-link-btn">PubMed</a>
+          <a href="https://www.ncbi.nlm.nih.gov/books/NBK25497/" target="_blank" class="api-link-btn">Documentation</a>
         </div>
       </div>
       <div class="form-group">
-        <label for="openevidence-key">Open Evidence API Key</label>
+        <label for="pubmed-key">NCBI API Key</label>
         <div class="key-row">
-          <input type="password" id="openevidence-key" placeholder="oe_...">
-          <button class="btn-test" id="test-openevidence" type="button">Test</button>
+          <input type="password" id="pubmed-key" placeholder="NCBI API key">
+          <button class="btn-test" id="test-pubmed" type="button">Test</button>
         </div>
-        <div class="helper-text">Medical AI with evidence-based responses. Your API key will be stored securely.</div>
-        <div class="test-status" id="test-openevidence-status"></div>
+        <div class="helper-text">Used for PubMed E-utilities requests. If empty, the extension uses the built-in key.</div>
+        <div class="test-status" id="test-pubmed-status"></div>
       </div>
     </div>
 

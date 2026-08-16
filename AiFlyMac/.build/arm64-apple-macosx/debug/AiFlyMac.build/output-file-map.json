@@ -1,0 +1,33 @@
+{
+  "": {
+    "swift-dependencies": "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/primary.swiftdeps"
+  },
+  "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/Sources/AiFlyMac/AiFlyMacApp.swift": {
+    "dependencies": "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/AiFlyMacApp.d",
+    "object": "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/AiFlyMacApp.swift.o",
+    "swiftmodule": "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/AiFlyMacApp~partial.swiftmodule",
+    "swift-dependencies": "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/AiFlyMacApp.swiftdeps",
+    "diagnostics": "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/AiFlyMacApp.dia"
+  },
+  "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/Sources/AiFlyMac/Models.swift": {
+    "dependencies": "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/Models.d",
+    "object": "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/Models.swift.o",
+    "swiftmodule": "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/Models~partial.swiftmodule",
+    "swift-dependencies": "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/Models.swiftdeps",
+    "diagnostics": "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/Models.dia"
+  },
+  "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/Sources/AiFlyMac/Services.swift": {
+    "dependencies": "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/Services.d",
+    "object": "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/Services.swift.o",
+    "swiftmodule": "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/Services~partial.swiftmodule",
+    "swift-dependencies": "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/Services.swiftdeps",
+    "diagnostics": "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/Services.dia"
+  },
+  "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/Sources/AiFlyMac/Views.swift": {
+    "dependencies": "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/Views.d",
+    "object": "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/Views.swift.o",
+    "swiftmodule": "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/Views~partial.swiftmodule",
+    "swift-dependencies": "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/Views.swiftdeps",
+    "diagnostics": "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/Views.dia"
+  }
+}

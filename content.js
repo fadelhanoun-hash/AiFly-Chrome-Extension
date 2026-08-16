@@ -6,6 +6,15 @@ let silentSend = false; // when true, next sendMessage() skips the user bubble
 let lastUserRequest = '';
 let resendPendingProvider = '';
 let followUpContext = ''; // stores AI bubble text when user clicks Follow-up
+let activeChatSelectionRange = null;
+let inlineFormatShortcutBound = false;
+let extensionDisabled = false;
+const RESPONSE_FORMAT_GUIDANCE = [
+  'Formatting requirements for this response:',
+  '- Bold important keywords and critical terms using **bold**.',
+  '- Use rounded highlighted text with color when emphasis is helpful, using ==highlighted phrase== where appropriate.',
+  '- Keep formatting readable and purposeful; do not over-highlight every sentence.'
+].join('\n');
 let shortcutConfig = {
   alt: true,
   ctrl: false,
@@ -283,8 +292,9 @@ function init() {
       position: fixed;
       z-index: 1000000;
       display: none;
-      align-items: center;
-      gap: 6px;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 8px;
       padding: 8px 10px;
       background: #ffffff;
       border: 1px solid #dee2e6;
@@ -332,6 +342,42 @@ function init() {
     .bold-popup-btn:active {
       background: #0056b3;
       transform: scale(0.98);
+    }
+
+    .bold-popup-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .bold-popup-swatch {
+      width: 22px;
+      height: 22px;
+      border-radius: 999px;
+      border: 1px solid rgba(0, 0, 0, 0.12);
+      cursor: pointer;
+      transition: transform 0.15s ease;
+    }
+
+    .bold-popup-swatch:hover {
+      transform: scale(1.08);
+    }
+
+    .bold-popup-swatch:active {
+      transform: scale(0.95);
+    }
+
+    .bold-popup-shortcut {
+      font-size: 10px;
+      color: #64748b;
+      margin-left: 3px;
+    }
+
+    .bold-popup-vdivider {
+      width: 1px;
+      height: 18px;
+      background: #dee2e6;
+      margin: 0 2px;
     }
 
     strong.ai-bold {
@@ -653,12 +699,22 @@ function init() {
 
     .image-grid {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-auto-rows: 140px;
       gap: 6px;
-      max-height: 210px;
+      max-height: 154px;
       overflow-y: auto;
       scrollbar-width: none;
       padding: 4px 10px 10px 10px;
+    }
+
+    .image-grid-card {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #e2e8f0;
     }
 
     .image-grid::-webkit-scrollbar {
@@ -667,7 +723,7 @@ function init() {
 
     .image-grid-item {
       width: 100%;
-      aspect-ratio: 4/3;
+      height: 100%;
       object-fit: cover;
       border-radius: 6px;
       cursor: pointer;
@@ -676,9 +732,115 @@ function init() {
       background: #e2e8f0;
     }
 
-    .image-grid-item:hover {
-      transform: scale(1.04);
+    .image-grid-card:hover .image-grid-item,
+    .image-grid-card.active .image-grid-item {
+      transform: scale(1.03);
       opacity: 0.88;
+    }
+
+    .image-grid-overlay {
+      position: absolute;
+      left: 50%;
+      bottom: 8px;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.16s ease;
+      z-index: 2;
+    }
+
+    .image-grid-card:hover .image-grid-overlay,
+    .image-grid-card.active .image-grid-overlay {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .image-grid-overlay-btn {
+      border: 1px solid rgba(255, 255, 255, 0.85);
+      background: rgba(0, 0, 0, 0.76);
+      color: #ffffff;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 5px 10px;
+      line-height: 1;
+      cursor: pointer;
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.22);
+      transition: background 0.16s ease;
+      white-space: nowrap;
+    }
+
+    .image-grid-overlay-btn:hover {
+      background: rgba(0, 0, 0, 0.88);
+    }
+
+    #ai-image-preview-dialog {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.74);
+      z-index: 1000001;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      box-sizing: border-box;
+    }
+
+    #ai-image-preview-dialog.visible {
+      display: flex;
+    }
+
+    .ai-image-preview-shell {
+      position: relative;
+      max-width: min(92vw, 980px);
+      max-height: 90vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    #ai-image-preview-img {
+      max-width: 100%;
+      max-height: 90vh;
+      border-radius: 10px;
+      box-shadow: 0 20px 48px rgba(0, 0, 0, 0.45);
+      background: #ffffff;
+      object-fit: contain;
+      transform-origin: center center;
+      transition: transform 0.08s ease;
+    }
+
+    #ai-image-preview-close {
+      position: absolute;
+      top: -12px;
+      right: -12px;
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      border: none;
+      background: #ffffff;
+      color: #0f172a;
+      font-size: 20px;
+      line-height: 1;
+      cursor: pointer;
+      box-shadow: 0 8px 18px rgba(0, 0, 0, 0.28);
+    }
+
+    .ai-image-preview-actions {
+      position: absolute;
+      left: 50%;
+      bottom: 14px;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      z-index: 3;
     }
 
     #ai-assistant-send {
@@ -832,6 +994,7 @@ function init() {
   });
 
   const handleGlobalKeydown = (e) => {
+    if (extensionDisabled) return;
     // Configurable hotkey
     if (matchesShortcut(e, shortcutConfig)) {
       e.preventDefault();
@@ -866,20 +1029,56 @@ function init() {
 // Listen for OPEN_MESSENGER from background (browser-level shortcut fires from any sidebar)
 if (window === window.top) {
   chrome.runtime.onMessage.addListener((request) => {
-    if (request.type === 'OPEN_MESSENGER') toggleMessenger();
+    if (request.type === 'OPEN_MESSENGER' && !extensionDisabled) toggleMessenger();
   });
 }
 
-// Initialize when DOM is ready or after a short delay for blank tabs
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', init);
-} else {
-  // Use setTimeout to work with blank pages that may still be initializing
-  setTimeout(init, 100);
+function isDisabledForUrl(urlString, rules) {
+  let url;
+  try {
+    url = new URL(urlString);
+  } catch (_) {
+    return false;
+  }
+
+  const hostname = url.hostname.toLowerCase().replace(/^www\./, '');
+  const pageUrl = `${url.origin}${url.pathname}${url.search}`;
+
+  return (Array.isArray(rules) ? rules : []).some((rule) => {
+    if (!rule || !rule.type || !rule.value) return false;
+    if (rule.type === 'site') {
+      const blockedHost = String(rule.value).toLowerCase().replace(/^www\./, '');
+      return hostname === blockedHost || hostname.endsWith(`.${blockedHost}`);
+    }
+    if (rule.type === 'page') {
+      try {
+        const blockedUrl = new URL(rule.value);
+        return pageUrl === `${blockedUrl.origin}${blockedUrl.pathname}${blockedUrl.search}`;
+      } catch (_) {
+        return false;
+      }
+    }
+    return false;
+  });
 }
 
-// Debug - let user know script is active
-console.log('✓ AI Assistant content script loaded');
+chrome.storage.sync.get('disabledRules', (result) => {
+  extensionDisabled = isDisabledForUrl(window.location.href, result.disabledRules);
+  if (extensionDisabled) {
+    console.log('AiFly is disabled on this page.');
+    return;
+  }
+
+  // Initialize when DOM is ready or after a short delay for blank tabs
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init, { once: true });
+  } else {
+    // Use setTimeout to work with blank pages that may still be initializing
+    setTimeout(init, 100);
+  }
+
+  console.log('✓ AI Assistant content script loaded');
+});
 
 function toggleMessenger() {
   if (messengerWindow && messengerWindow.parentElement) {
@@ -912,7 +1111,7 @@ function createMessenger() {
           <div id="ai-assistant-toggle">
             <button id="provider-chatgpt" class="provider-toggle engine-btn" data-provider="chatgpt">ChatGPT</button>
             <button id="provider-gemini" class="provider-toggle engine-btn" data-provider="gemini">Gemini</button>
-            <button id="provider-openevidence" class="provider-toggle engine-btn" data-provider="openevidence">OpenEvidence</button>
+            <button id="provider-pubmed" class="provider-toggle engine-btn" data-provider="pubmed">PubMed</button>
             <button id="provider-jama" class="provider-toggle engine-btn" data-provider="jama">JAMA</button>
           </div>
           <div id="ai-assistant-font-controls">
@@ -943,9 +1142,20 @@ function createMessenger() {
       <div class="resize-handle resize-corner"></div>
     </div>
     <div id="ai-assistant-bold-popup" class="bold-popup" role="menu" aria-hidden="true">
-      <button id="bold-popup-google" class="bold-popup-btn" type="button">Google</button>
-      <button id="bold-popup-copy" class="bold-popup-btn" type="button">Copy</button>
-      <button id="bold-popup-followup" class="bold-popup-btn" type="button">Follow-up</button>
+      <div class="bold-popup-group">
+        <button id="bold-popup-color-blue" class="bold-popup-swatch" type="button" title="Blue text" style="background:#dbeafe;"></button>
+        <button id="bold-popup-color-red" class="bold-popup-swatch" type="button" title="Red text" style="background:#fee2e2;"></button>
+        <button id="bold-popup-color-green" class="bold-popup-swatch" type="button" title="Green text" style="background:#dcfce7;"></button>
+        <div class="bold-popup-vdivider"></div>
+        <button id="bold-popup-highlight-yellow" class="bold-popup-swatch" type="button" title="Yellow highlight" style="background:#fde68a;"></button>
+        <button id="bold-popup-highlight-mint" class="bold-popup-swatch" type="button" title="Mint highlight" style="background:#bbf7d0;"></button>
+        <button id="bold-popup-highlight-sky" class="bold-popup-swatch" type="button" title="Sky highlight" style="background:#bfdbfe;"></button>
+      </div>
+      <div class="bold-popup-group">
+        <button id="bold-popup-google" class="bold-popup-btn" type="button">Google</button>
+        <button id="bold-popup-copy" class="bold-popup-btn" type="button">Copy</button>
+        <button id="bold-popup-followup" class="bold-popup-btn" type="button">Follow-up</button>
+      </div>
     </div>
   `;
 
@@ -987,6 +1197,12 @@ function createMessenger() {
   const resendEngineBtn = document.getElementById('ai-assistant-resend-engine');
   const chatDiv = document.getElementById('ai-assistant-chat');
   const boldPopup = document.getElementById('ai-assistant-bold-popup');
+  const colorBlueBtn = document.getElementById('bold-popup-color-blue');
+  const colorRedBtn = document.getElementById('bold-popup-color-red');
+  const colorGreenBtn = document.getElementById('bold-popup-color-green');
+  const highlightYellowBtn = document.getElementById('bold-popup-highlight-yellow');
+  const highlightMintBtn = document.getElementById('bold-popup-highlight-mint');
+  const highlightSkyBtn = document.getElementById('bold-popup-highlight-sky');
   const boldGoogleBtn = document.getElementById('bold-popup-google');
   const boldCopyBtn = document.getElementById('bold-popup-copy');
   const boldFollowupBtn = document.getElementById('bold-popup-followup');
@@ -1027,6 +1243,71 @@ function createMessenger() {
     if (!boldPopup) return;
     boldPopup.classList.remove('visible');
     boldPopup.setAttribute('aria-hidden', 'true');
+    activeChatSelectionRange = null;
+  };
+
+  const setSelectionRangeFromWindow = () => {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return false;
+    const range = selection.getRangeAt(0);
+    if (range.collapsed) return false;
+    if (!chatDiv.contains(range.commonAncestorContainer)) return false;
+    activeChatSelectionRange = range.cloneRange();
+    return true;
+  };
+
+  const wrapSelectedContent = (createWrapper) => {
+    if (!activeChatSelectionRange) return false;
+    const range = activeChatSelectionRange.cloneRange();
+    if (range.collapsed) return false;
+
+    const wrapper = createWrapper();
+    const extracted = range.extractContents();
+    wrapper.appendChild(extracted);
+    range.insertNode(wrapper);
+    activeChatSelectionRange = null;
+    return true;
+  };
+
+  const formatSelection = (type) => {
+    if (!activeChatSelectionRange && !setSelectionRangeFromWindow()) return;
+
+    if (type === 'bold') {
+      wrapSelectedContent(() => document.createElement('strong'));
+      hideBoldPopup();
+      return;
+    }
+    if (type === 'italic') {
+      wrapSelectedContent(() => document.createElement('em'));
+      hideBoldPopup();
+      return;
+    }
+    if (type === 'underline') {
+      wrapSelectedContent(() => document.createElement('u'));
+      hideBoldPopup();
+      return;
+    }
+    if (type.startsWith('color:')) {
+      const colorValue = type.split(':')[1];
+      wrapSelectedContent(() => {
+        const span = document.createElement('span');
+        span.style.color = colorValue;
+        return span;
+      });
+      hideBoldPopup();
+      return;
+    }
+    if (type.startsWith('highlight:')) {
+      const highlightValue = type.split(':')[1];
+      wrapSelectedContent(() => {
+        const span = document.createElement('span');
+        span.style.background = highlightValue;
+        span.style.borderRadius = '8px';
+        span.style.padding = '1px 6px';
+        return span;
+      });
+      hideBoldPopup();
+    }
   };
 
   const showBoldPopup = (target) => {
@@ -1110,6 +1391,7 @@ function createMessenger() {
   boldCopyBtn.addEventListener('click', () => {
     if (!activeBoldText) return;
     navigator.clipboard.writeText(activeBoldText);
+    hideBoldPopup();
   });
 
   boldFollowupBtn.addEventListener('click', () => {
@@ -1119,6 +1401,51 @@ function createMessenger() {
     input.focus();
     hideBoldPopup();
   });
+
+  // Capture selection on mousedown (before browser can collapse it) then format on click
+  const captureAndPrevent = (e) => {
+    e.preventDefault();
+    setSelectionRangeFromWindow();
+  };
+
+  colorBlueBtn.addEventListener('mousedown', captureAndPrevent);
+  colorBlueBtn.addEventListener('click', () => formatSelection('color:#1d4ed8'));
+  colorRedBtn.addEventListener('mousedown', captureAndPrevent);
+  colorRedBtn.addEventListener('click', () => formatSelection('color:#b91c1c'));
+  colorGreenBtn.addEventListener('mousedown', captureAndPrevent);
+  colorGreenBtn.addEventListener('click', () => formatSelection('color:#166534'));
+  highlightYellowBtn.addEventListener('mousedown', captureAndPrevent);
+  highlightYellowBtn.addEventListener('click', () => formatSelection('highlight:#fef08a'));
+  highlightMintBtn.addEventListener('mousedown', captureAndPrevent);
+  highlightMintBtn.addEventListener('click', () => formatSelection('highlight:#bbf7d0'));
+  highlightSkyBtn.addEventListener('mousedown', captureAndPrevent);
+  highlightSkyBtn.addEventListener('click', () => formatSelection('highlight:#bfdbfe'));
+
+  if (!inlineFormatShortcutBound) {
+    document.addEventListener('keydown', (e) => {
+      const hasModifier = e.metaKey || e.ctrlKey;
+      if (!hasModifier || e.altKey) return;
+      const currentChatDiv = document.getElementById('ai-assistant-chat');
+      if (!currentChatDiv) return;
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0) return;
+      const range = selection.getRangeAt(0);
+      if (range.collapsed || !currentChatDiv.contains(range.commonAncestorContainer)) return;
+
+      const key = (e.key || '').toLowerCase();
+      if (key === 'b') {
+        e.preventDefault();
+        formatSelection('bold');
+      } else if (key === 'i') {
+        e.preventDefault();
+        formatSelection('italic');
+      } else if (key === 'u') {
+        e.preventDefault();
+        formatSelection('underline');
+      }
+    }, true);
+    inlineFormatShortcutBound = true;
+  }
 
   // Handle text selection in chat
   function handleTextSelection() {
@@ -1146,6 +1473,7 @@ function createMessenger() {
     
     if (isInChat) {
       activeBoldText = selectedText;
+      setSelectionRangeFromWindow();
       showBoldPopup(getSelectionRect());
     }
   }
@@ -1213,7 +1541,27 @@ function createMessenger() {
     const btn = e.target.closest('.action-btn');
     if (!btn) return;
     
-    if (btn.classList.contains('copy-btn')) {
+    if (btn.classList.contains('shorten-btn') || btn.classList.contains('lengthen-btn')) {
+      const messageEl = btn.closest('.ai-message');
+      const contentEl = messageEl ? messageEl.querySelector('.message-content') : null;
+      let messageText = contentEl ? contentEl.innerText : '';
+      messageText = messageText.replace(/^\s*\n+|\n+\s*$/g, '').trim();
+      if (!messageText) return;
+
+      const mode = btn.classList.contains('shorten-btn') ? 'shorten' : 'lengthen';
+      const originalText = btn.textContent;
+      btn.textContent = mode === 'shorten' ? 'Shortening...' : 'Lengthening...';
+      btn.disabled = true;
+
+      runBubbleRewrite(mode, messageText)
+        .catch((err) => {
+          console.error('Bubble rewrite failed:', err);
+        })
+        .finally(() => {
+          btn.textContent = originalText;
+          btn.disabled = false;
+        });
+    } else if (btn.classList.contains('copy-btn')) {
       const messageEl = btn.closest('.ai-message');
       const contentEl = messageEl.querySelector('.message-content');
       let messageText = contentEl.innerText;
@@ -1243,6 +1591,41 @@ function createMessenger() {
           setTimeout(() => btn.textContent = originalText, 1500);
         });
       }
+    } else if (btn.classList.contains('transpose-table-btn')) {
+      const messageEl = btn.closest('.ai-message');
+      const contentEl = messageEl.querySelector('.message-content');
+      const table = contentEl.querySelector('table.ai-table');
+
+      if (table) {
+        transposeAiTable(table);
+        const originalText = btn.textContent;
+        btn.textContent = 'Transposed!';
+        setTimeout(() => {
+          btn.textContent = originalText;
+        }, 1200);
+      }
+    } else if (btn.classList.contains('copy-image-btn')) {
+      const messageEl = btn.closest('.ai-message');
+      const originalText = btn.textContent;
+      btn.textContent = 'Copying...';
+      btn.disabled = true;
+
+      copyBubbleAsImage(messageEl)
+        .then(() => {
+          btn.textContent = 'Image Copied!';
+          setTimeout(() => {
+            btn.textContent = originalText;
+            btn.disabled = false;
+          }, 1400);
+        })
+        .catch((err) => {
+          console.error('Copy image failed:', err);
+          btn.textContent = 'Copy Failed';
+          setTimeout(() => {
+            btn.textContent = originalText;
+            btn.disabled = false;
+          }, 1500);
+        });
     } else if (btn.classList.contains('followup-btn')) {
       const inputEl = document.getElementById('ai-assistant-input');
       const sendBtn = document.getElementById('ai-assistant-send');
@@ -1348,7 +1731,7 @@ function clearChat() {
 function providerDisplayName(provider) {
   if (provider === 'chatgpt') return 'ChatGPT';
   if (provider === 'gemini') return 'Gemini';
-  if (provider === 'openevidence') return 'OpenEvidence';
+  if (provider === 'pubmed') return 'PubMed';
   if (provider === 'jama') return 'JAMA';
   return 'ChatGPT';
 }
@@ -1691,17 +2074,7 @@ async function sendMessage() {
   chatDiv.scrollTop = chatDiv.scrollHeight;
 
   // Show loading
-  const loadingMsg = document.createElement('div');
-  loadingMsg.className = 'ai-assistant-message ai-message loading';
-  loadingMsg.innerHTML = `
-    <div class="thinking-bar">
-      <div class="thinking-dots"><span></span><span></span><span></span></div>
-      <div class="thinking-progress-track">
-        <div class="thinking-progress-fill"></div>
-      </div>
-    </div>
-  `;
-  chatDiv.appendChild(loadingMsg);
+  const loadingMsg = appendLoadingBubble(chatDiv);
   chatDiv.scrollTop = chatDiv.scrollHeight;
 
   try {
@@ -1712,56 +2085,24 @@ async function sendMessage() {
     // Get medical mode setting
     const syncData = await chrome.storage.sync.get('medicalMode');
     const medicalMode = syncData.medicalMode || false;
+    const composedPrompt = `${finalMessage}\n\n${RESPONSE_FORMAT_GUIDANCE}`;
     
     // Prepend medical context if enabled
     let contextMessage = message;
     if (medicalMode) {
-      contextMessage = 'Medical query (provide medication doses, frequencies, diagnosis criteria, and treatment protocols): ' + finalMessage;
+      contextMessage = 'Medical query (provide medication doses, frequencies, diagnosis criteria, and treatment protocols): ' + composedPrompt;
     } else {
-      contextMessage = finalMessage;
+      contextMessage = composedPrompt;
     }
     
     // Get AI response with conversation context
-    const response = await new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage(
-        { type: 'GET_AI_RESPONSE', message: contextMessage, history },
-        (result) => {
-          if (result.success) {
-            resolve(result.response);
-          } else {
-            reject(new Error(result.error));
-          }
-        }
-      );
-    });
+    const response = await requestAiResponse(contextMessage, history);
 
     // Remove loading message
     loadingMsg.remove();
 
     // Add AI response with formatting
-    const aiMsg = document.createElement('div');
-    aiMsg.className = 'ai-assistant-message ai-message';
-    
-    const contentDiv = document.createElement('div');
-    contentDiv.className = 'message-content';
-    contentDiv.innerHTML = formatAIResponse(response);
-    
-    // Add action buttons container at bottom inside bubble
-    const actionsDiv = document.createElement('div');
-    actionsDiv.className = 'message-actions';
-    
-    // Check if response contains a table
-    const hasTable = contentDiv.querySelector('table.ai-table');
-    
-    actionsDiv.innerHTML = `
-      <button class="action-btn copy-btn">Copy</button>
-      ${hasTable ? '<button class="action-btn copy-table-btn">Copy Table</button>' : ''}
-      <button class="action-btn followup-btn">Follow-up</button>
-    `;
-    
-    aiMsg.appendChild(contentDiv);
-    aiMsg.appendChild(actionsDiv);
-    chatDiv.appendChild(aiMsg);
+    appendAiResponseBubble(chatDiv, response);
 
     // Generate and display suggestions
     generateSuggestions(message, response);
@@ -1855,6 +2196,30 @@ function formatAIResponse(text) {
   return text;
 }
 
+function transposeAiTable(table) {
+  const rows = Array.from(table.querySelectorAll('tr')).map((row) => {
+    return Array.from(row.querySelectorAll('td')).map((cell) => cell.innerHTML);
+  });
+
+  if (rows.length === 0) return;
+
+  const maxCols = rows.reduce((max, row) => Math.max(max, row.length), 0);
+  if (maxCols === 0) return;
+
+  const transposed = [];
+  for (let colIndex = 0; colIndex < maxCols; colIndex++) {
+    const newRow = [];
+    for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+      newRow.push(rows[rowIndex][colIndex] ?? '');
+    }
+    transposed.push(newRow);
+  }
+
+  table.innerHTML = transposed
+    .map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join('')}</tr>`)
+    .join('');
+}
+
 async function saveChatMessage(role, content) {
   const data = await chrome.storage.local.get('chatHistory');
   const history = data.chatHistory || [];
@@ -1867,6 +2232,101 @@ async function saveChatMessage(role, content) {
   }
   
   await chrome.storage.local.set({ chatHistory: history });
+}
+
+function appendLoadingBubble(chatDiv) {
+  const loadingMsg = document.createElement('div');
+  loadingMsg.className = 'ai-assistant-message ai-message loading';
+  loadingMsg.innerHTML = `
+    <div class="thinking-bar">
+      <div class="thinking-dots"><span></span><span></span><span></span></div>
+      <div class="thinking-progress-track">
+        <div class="thinking-progress-fill"></div>
+      </div>
+    </div>
+  `;
+  chatDiv.appendChild(loadingMsg);
+  return loadingMsg;
+}
+
+function buildMessageActionsHtml(hasTable) {
+  return `
+    <button class="action-btn shorten-btn">Shorten</button>
+    <button class="action-btn lengthen-btn">Lengthen</button>
+    <button class="action-btn copy-btn">Copy</button>
+    ${hasTable ? '<button class="action-btn copy-table-btn">Copy Table</button>' : ''}
+    ${hasTable ? '<button class="action-btn transpose-table-btn">Transpose Table</button>' : ''}
+    <button class="action-btn copy-image-btn">Copy as Image</button>
+    <button class="action-btn followup-btn">Follow-up</button>
+  `;
+}
+
+function appendAiResponseBubble(chatDiv, responseText) {
+  const aiMsg = document.createElement('div');
+  aiMsg.className = 'ai-assistant-message ai-message';
+
+  const contentDiv = document.createElement('div');
+  contentDiv.className = 'message-content';
+  contentDiv.innerHTML = formatAIResponse(responseText);
+
+  const actionsDiv = document.createElement('div');
+  actionsDiv.className = 'message-actions';
+
+  const hasTable = contentDiv.querySelector('table.ai-table');
+  actionsDiv.innerHTML = buildMessageActionsHtml(!!hasTable);
+
+  aiMsg.appendChild(contentDiv);
+  aiMsg.appendChild(actionsDiv);
+  chatDiv.appendChild(aiMsg);
+  return aiMsg;
+}
+
+function requestAiResponse(message, history) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(
+      { type: 'GET_AI_RESPONSE', message, history },
+      (result) => {
+        if (result && result.success) {
+          resolve(result.response);
+        } else {
+          reject(new Error((result && result.error) || 'Failed to get AI response'));
+        }
+      }
+    );
+  });
+}
+
+async function runBubbleRewrite(mode, sourceText) {
+  const chatDiv = document.getElementById('ai-assistant-chat');
+  if (!chatDiv || !sourceText) return;
+
+  const actionPrompt = mode === 'shorten'
+    ? 'Rewrite the following response so it is significantly shorter while preserving key meaning and important facts.'
+    : 'Rewrite the following response so it is more detailed and longer, with clearer explanation and additional useful context.';
+
+  const composedPrompt = `${actionPrompt}\n\nOriginal response:\n"""\n${sourceText}\n"""\n\n${RESPONSE_FORMAT_GUIDANCE}`;
+  const loadingMsg = appendLoadingBubble(chatDiv);
+  chatDiv.scrollTop = chatDiv.scrollHeight;
+
+  try {
+    const data = await chrome.storage.local.get('chatHistory');
+    const history = data.chatHistory || [];
+    const response = await requestAiResponse(composedPrompt, history);
+    loadingMsg.remove();
+    appendAiResponseBubble(chatDiv, response);
+    await saveChatMessage('assistant', response);
+  } catch (error) {
+    loadingMsg.remove();
+    const errorMsg = document.createElement('div');
+    errorMsg.className = 'ai-assistant-message ai-message';
+    const content = document.createElement('div');
+    content.className = 'message-content';
+    content.textContent = `Error: ${error.message}`;
+    errorMsg.appendChild(content);
+    chatDiv.appendChild(errorMsg);
+  }
+
+  chatDiv.scrollTop = chatDiv.scrollHeight;
 }
 
 async function loadChatHistory() {
@@ -1890,11 +2350,7 @@ async function loadChatHistory() {
       // Check if message contains a table
       const hasTable = contentDiv.querySelector('table.ai-table');
       
-      actionsDiv.innerHTML = `
-        <button class="action-btn copy-btn">Copy</button>
-        ${hasTable ? '<button class="action-btn copy-table-btn">Copy Table</button>' : ''}
-        <button class="action-btn followup-btn">Follow-up</button>
-      `;
+      actionsDiv.innerHTML = buildMessageActionsHtml(!!hasTable);
       
       aiMsg.appendChild(contentDiv);
       aiMsg.appendChild(actionsDiv);
@@ -1933,6 +2389,343 @@ function generateSuggestions(userMessage, aiResponse) {
     });
     suggestionsDiv.appendChild(btn);
   });
+}
+
+async function copyBubbleAsImage(messageEl) {
+  if (!messageEl) throw new Error('Message element not found.');
+
+  const contentEl = messageEl.querySelector('.message-content');
+  if (!contentEl) throw new Error('Message content not found.');
+
+  const exportOuter = document.createElement('div');
+  exportOuter.style.background = '#ffffff';
+  exportOuter.style.padding = '18px';
+  exportOuter.style.display = 'inline-block';
+  exportOuter.style.borderRadius = '14px';
+
+  const exportBubble = document.createElement('div');
+  exportBubble.style.background = '#f1f3f5';
+  exportBubble.style.color = '#212529';
+  exportBubble.style.borderRadius = '10px 10px 10px 4px';
+  exportBubble.style.padding = '14px 16px';
+  exportBubble.style.fontFamily = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+  exportBubble.style.fontSize = '14px';
+  exportBubble.style.lineHeight = '1.5';
+  exportBubble.style.maxWidth = '560px';
+  exportBubble.style.boxSizing = 'border-box';
+
+  const clonedContent = contentEl.cloneNode(true);
+  exportBubble.appendChild(clonedContent);
+  exportOuter.appendChild(exportBubble);
+
+  exportBubble.querySelectorAll('mark').forEach((markEl) => {
+    markEl.style.background = 'linear-gradient(120deg, #ffeaa7 0%, #fdcb6e 100%)';
+    markEl.style.color = '#2d3436';
+    markEl.style.padding = '3px 8px';
+    markEl.style.borderRadius = '8px';
+    markEl.style.fontWeight = '500';
+  });
+
+  exportBubble.querySelectorAll('table').forEach((tableEl) => {
+    tableEl.style.width = '100%';
+    tableEl.style.borderCollapse = 'collapse';
+    tableEl.style.background = '#ffffff';
+    tableEl.style.marginTop = '8px';
+    tableEl.style.marginBottom = '8px';
+    tableEl.querySelectorAll('td').forEach((tdEl) => {
+      tdEl.style.border = '1px solid #e9ecef';
+      tdEl.style.padding = '8px 10px';
+      tdEl.style.verticalAlign = 'top';
+    });
+  });
+
+  const measuringStage = document.createElement('div');
+  measuringStage.style.position = 'fixed';
+  measuringStage.style.left = '-99999px';
+  measuringStage.style.top = '0';
+  measuringStage.style.pointerEvents = 'none';
+  measuringStage.appendChild(exportOuter);
+  document.body.appendChild(measuringStage);
+
+  let width = 1;
+  let height = 1;
+  let serializedMarkup = '';
+  try {
+    const rect = exportOuter.getBoundingClientRect();
+    width = Math.max(1, Math.ceil(rect.width));
+    height = Math.max(1, Math.ceil(rect.height));
+    serializedMarkup = new XMLSerializer().serializeToString(exportOuter);
+  } finally {
+    document.body.removeChild(measuringStage);
+  }
+
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+      <foreignObject width="100%" height="100%">${serializedMarkup}</foreignObject>
+    </svg>
+  `;
+
+  const blob = await svgToPngBlob(svg, width, height);
+  if (!blob) throw new Error('Unable to render image blob.');
+
+  if (!navigator.clipboard || typeof ClipboardItem === 'undefined') {
+    throw new Error('Clipboard image API is not available in this browser context.');
+  }
+
+  await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+}
+
+function svgToPngBlob(svgMarkup, width, height) {
+  return new Promise((resolve, reject) => {
+    const svgBlob = new Blob([svgMarkup], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(svgBlob);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          URL.revokeObjectURL(url);
+          reject(new Error('2D canvas context unavailable.'));
+          return;
+        }
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0);
+        canvas.toBlob((blob) => {
+          URL.revokeObjectURL(url);
+          resolve(blob);
+        }, 'image/png');
+      } catch (error) {
+        URL.revokeObjectURL(url);
+        reject(error);
+      }
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Unable to rasterize SVG content.'));
+    };
+    img.src = url;
+  });
+}
+
+async function copyImageFromUrlToClipboard(imageUrl) {
+  if (!imageUrl) throw new Error('Image URL not found.');
+  if (!navigator.clipboard || typeof ClipboardItem === 'undefined') {
+    throw new Error('Clipboard image API is not available in this browser context.');
+  }
+
+  let blob = null;
+
+  try {
+    const directResp = await fetch(imageUrl);
+    if (directResp.ok) {
+      const directBlob = await directResp.blob();
+      if (directBlob && directBlob.type.startsWith('image/')) {
+        blob = directBlob;
+      }
+    }
+  } catch (error) {
+    console.warn('Direct image fetch failed, fallback will be used:', error);
+  }
+
+  if (!blob) {
+    const dataUrl = await new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({ type: 'FETCH_IMAGE_AS_DATA_URL', imageUrl }, (res) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        if (!res || !res.success || !res.dataUrl) {
+          reject(new Error((res && res.error) || 'Unable to fetch image data.'));
+          return;
+        }
+        resolve(res.dataUrl);
+      });
+    });
+    blob = dataUrlToBlob(dataUrl);
+  }
+
+  if (!blob || !blob.type.startsWith('image/')) {
+    throw new Error('Source is not an image.');
+  }
+
+  blob = await convertBlobToPng(blob);
+
+  await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+}
+
+function dataUrlToBlob(dataUrl) {
+  const [header, body = ''] = String(dataUrl || '').split(',');
+  if (!header || !body) throw new Error('Invalid image data received.');
+  const mimeMatch = header.match(/data:([^;]+);base64/i);
+  const mimeType = mimeMatch ? mimeMatch[1] : 'application/octet-stream';
+  const binary = atob(body);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: mimeType });
+}
+
+function convertBlobToPng(blob) {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(blob);
+    const img = new Image();
+
+    img.onload = () => {
+      try {
+        const width = Math.max(1, img.naturalWidth || img.width || 1);
+        const height = Math.max(1, img.naturalHeight || img.height || 1);
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          URL.revokeObjectURL(objectUrl);
+          reject(new Error('2D canvas context unavailable.'));
+          return;
+        }
+
+        ctx.drawImage(img, 0, 0, width, height);
+        canvas.toBlob((pngBlob) => {
+          URL.revokeObjectURL(objectUrl);
+          if (!pngBlob) {
+            reject(new Error('Unable to convert image to PNG.'));
+            return;
+          }
+          resolve(pngBlob);
+        }, 'image/png');
+      } catch (error) {
+        URL.revokeObjectURL(objectUrl);
+        reject(error);
+      }
+    };
+
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error('Unable to decode image blob.'));
+    };
+
+    img.src = objectUrl;
+  });
+}
+
+function setImageOverlayButtonFeedback(btn, text, delay = 1200) {
+  if (!btn) return;
+  const original = btn.textContent;
+  btn.textContent = text;
+  setTimeout(() => {
+    btn.textContent = original;
+  }, delay);
+}
+
+function ensureImagePreviewDialog() {
+  let dialog = document.getElementById('ai-image-preview-dialog');
+  if (dialog) return dialog;
+
+  dialog = document.createElement('div');
+  dialog.id = 'ai-image-preview-dialog';
+  dialog.innerHTML = `
+    <div class="ai-image-preview-shell">
+      <button id="ai-image-preview-close" type="button" aria-label="Close image preview">×</button>
+      <img id="ai-image-preview-img" alt="Image preview" />
+      <div class="ai-image-preview-actions">
+        <button id="ai-image-preview-copy" class="image-grid-overlay-btn" type="button">Copy</button>
+        <button id="ai-image-preview-link" class="image-grid-overlay-btn" type="button">Link</button>
+      </div>
+    </div>
+  `;
+
+  const img = dialog.querySelector('#ai-image-preview-img');
+  const shell = dialog.querySelector('.ai-image-preview-shell');
+  let zoomScale = 1;
+  const minZoom = 0.8;
+  const maxZoom = 4;
+
+  const applyZoom = () => {
+    img.style.transform = `scale(${zoomScale})`;
+  };
+
+  const resetZoom = () => {
+    zoomScale = 1;
+    applyZoom();
+  };
+
+  const closeDialog = () => {
+    dialog.classList.remove('visible');
+    resetZoom();
+  };
+
+  dialog.addEventListener('click', (event) => {
+    if (event.target === dialog) {
+      closeDialog();
+    }
+  });
+
+  dialog.querySelector('#ai-image-preview-close').addEventListener('click', closeDialog);
+
+  const previewCopyBtn = dialog.querySelector('#ai-image-preview-copy');
+  const previewLinkBtn = dialog.querySelector('#ai-image-preview-link');
+
+  previewCopyBtn.addEventListener('click', async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const imageUrl = dialog.dataset.imageUrl || '';
+    if (!imageUrl) return;
+    try {
+      await copyImageFromUrlToClipboard(imageUrl);
+      setImageOverlayButtonFeedback(previewCopyBtn, 'Copied!');
+    } catch (error) {
+      console.error('Preview image copy failed:', error);
+      setImageOverlayButtonFeedback(previewCopyBtn, 'Failed', 1500);
+    }
+  });
+
+  previewLinkBtn.addEventListener('click', async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const imageUrl = dialog.dataset.imageUrl || '';
+    if (!imageUrl) return;
+    try {
+      await navigator.clipboard.writeText(imageUrl);
+      setImageOverlayButtonFeedback(previewLinkBtn, 'Linked!');
+    } catch (error) {
+      console.error('Preview image link copy failed:', error);
+      setImageOverlayButtonFeedback(previewLinkBtn, 'Failed', 1500);
+    }
+  });
+
+  shell.addEventListener('wheel', (event) => {
+    if (!dialog.classList.contains('visible')) return;
+    event.preventDefault();
+
+    const delta = event.deltaY < 0 ? 0.12 : -0.12;
+    zoomScale = Math.max(minZoom, Math.min(maxZoom, zoomScale + delta));
+    applyZoom();
+  }, { passive: false });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && dialog.classList.contains('visible')) {
+      closeDialog();
+    }
+  });
+
+  document.body.appendChild(dialog);
+  return dialog;
+}
+
+function openImagePreviewDialog(imageUrl, altText) {
+  if (!imageUrl) return;
+  const dialog = ensureImagePreviewDialog();
+  const img = dialog.querySelector('#ai-image-preview-img');
+  dialog.dataset.imageUrl = imageUrl;
+  img.style.transform = 'scale(1)';
+  img.src = imageUrl;
+  img.alt = altText || 'Image preview';
+  dialog.classList.add('visible');
 }
 
 async function handleImageSearch() {
@@ -1987,13 +2780,65 @@ async function handleImageSearch() {
       const grid = document.createElement('div');
       grid.className = 'image-grid';
       urls.forEach(url => {
+        const card = document.createElement('div');
+        card.className = 'image-grid-card';
+
         const img = document.createElement('img');
         img.src = url;
         img.className = 'image-grid-item';
         img.alt = query;
         img.loading = 'lazy';
-        img.addEventListener('click', () => window.open(url, '_blank'));
-        grid.appendChild(img);
+
+        const overlay = document.createElement('div');
+        overlay.className = 'image-grid-overlay';
+
+        const copyBtn = document.createElement('button');
+        copyBtn.type = 'button';
+        copyBtn.className = 'image-grid-overlay-btn';
+        copyBtn.textContent = 'Copy';
+
+        const linkBtn = document.createElement('button');
+        linkBtn.type = 'button';
+        linkBtn.className = 'image-grid-overlay-btn';
+        linkBtn.textContent = 'Link';
+
+        copyBtn.addEventListener('click', async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          try {
+            await copyImageFromUrlToClipboard(url);
+            setImageOverlayButtonFeedback(copyBtn, 'Copied!');
+          } catch (error) {
+            console.error('Image copy failed:', error);
+            setImageOverlayButtonFeedback(copyBtn, 'Failed', 1500);
+          }
+        });
+
+        linkBtn.addEventListener('click', async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          try {
+            await navigator.clipboard.writeText(url);
+            setImageOverlayButtonFeedback(linkBtn, 'Linked!');
+          } catch (error) {
+            console.error('Image link copy failed:', error);
+            setImageOverlayButtonFeedback(linkBtn, 'Failed', 1500);
+          }
+        });
+
+        img.addEventListener('click', () => {
+          grid.querySelectorAll('.image-grid-card.active').forEach((activeCard) => {
+            activeCard.classList.remove('active');
+          });
+          card.classList.add('active');
+          openImagePreviewDialog(url, query);
+        });
+
+        overlay.appendChild(copyBtn);
+        overlay.appendChild(linkBtn);
+        card.appendChild(img);
+        card.appendChild(overlay);
+        grid.appendChild(card);
       });
       bubble.appendChild(grid);
     }

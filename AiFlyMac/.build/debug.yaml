@@ -1,0 +1,81 @@
+client:
+  name: basic
+  file-system: device-agnostic
+tools: {}
+targets:
+  "AiFlyMac-arm64-apple-macosx-debug.exe": ["<AiFlyMac-arm64-apple-macosx-debug.exe>"]
+  "AiFlyMac-arm64-apple-macosx-debug.module": ["<AiFlyMac-arm64-apple-macosx-debug.module>"]
+  "PackageStructure": ["<PackageStructure>"]
+  "main": ["<AiFlyMac-arm64-apple-macosx-debug.exe>","<AiFlyMac-arm64-apple-macosx-debug.module>"]
+  "test": ["<AiFlyMac-arm64-apple-macosx-debug.exe>","<AiFlyMac-arm64-apple-macosx-debug.module>"]
+default: "main"
+nodes:
+  "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/Sources/AiFlyMac/":
+    is-directory-structure: true
+    content-exclusion-patterns: [".git",".build"]
+  "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac":
+    is-mutated: true
+commands:
+  "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac-entitlement.plist":
+    tool: write-auxiliary-file
+    inputs: ["<entitlement-plist>","<com.apple.security.get-task-allow>"]
+    outputs: ["/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac-entitlement.plist"]
+    description: "Write auxiliary file /Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac-entitlement.plist"
+
+  "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/sources":
+    tool: write-auxiliary-file
+    inputs: ["<sources-file-list>","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/Sources/AiFlyMac/AiFlyMacApp.swift","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/Sources/AiFlyMac/Models.swift","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/Sources/AiFlyMac/Services.swift","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/Sources/AiFlyMac/Views.swift"]
+    outputs: ["/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/sources"]
+    description: "Write auxiliary file /Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/sources"
+
+  "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.product/Objects.LinkFileList":
+    tool: write-auxiliary-file
+    inputs: ["<link-file-list>","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/AiFlyMacApp.swift.o","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/Models.swift.o","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/Services.swift.o","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/Views.swift.o"]
+    outputs: ["/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.product/Objects.LinkFileList"]
+    description: "Write auxiliary file /Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.product/Objects.LinkFileList"
+
+  "/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt":
+    tool: write-auxiliary-file
+    inputs: ["<swift-get-version>","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"]
+    outputs: ["/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"]
+    always-out-of-date: "true"
+    description: "Write auxiliary file /Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+
+  "<AiFlyMac-arm64-apple-macosx-debug.exe>":
+    tool: phony
+    inputs: ["<AiFlyMac-arm64-apple-macosx-debug.exe-CodeSigning>"]
+    outputs: ["<AiFlyMac-arm64-apple-macosx-debug.exe>"]
+
+  "<AiFlyMac-arm64-apple-macosx-debug.module>":
+    tool: phony
+    inputs: ["/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/AiFlyMacApp.swift.o","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/Models.swift.o","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/Services.swift.o","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/Views.swift.o","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/Modules/AiFlyMac.swiftmodule"]
+    outputs: ["<AiFlyMac-arm64-apple-macosx-debug.module>"]
+
+  "C.AiFlyMac-arm64-apple-macosx-debug.exe":
+    tool: shell
+    inputs: ["/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/AiFlyMacApp.swift.o","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/Models.swift.o","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/Services.swift.o","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/Views.swift.o","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.product/Objects.LinkFileList"]
+    outputs: ["/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac"]
+    description: "Linking ./.build/arm64-apple-macosx/debug/AiFlyMac"
+    args: ["/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc","-L","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug","-o","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac","-module-name","AiFlyMac","-Xlinker","-no_warn_duplicate_libraries","-emit-executable","-Xlinker","-alias","-Xlinker","_AiFlyMac_main","-Xlinker","_main","-Xlinker","-rpath","-Xlinker","@loader_path","@/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.product/Objects.LinkFileList","-Xlinker","-rpath","-Xlinker","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-6.2/macosx","-target","arm64-apple-macosx13.0","-Xlinker","-add_ast_path","-Xlinker","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/Modules/AiFlyMac.swiftmodule","-plugin-path","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing","-sdk","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk","-F","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks","-I","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-L","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-g"]
+
+  "C.AiFlyMac-arm64-apple-macosx-debug.exe-entitlements":
+    tool: shell
+    inputs: ["/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac-entitlement.plist"]
+    outputs: ["<AiFlyMac-arm64-apple-macosx-debug.exe-CodeSigning>"]
+    description: "Applying debug entitlements to ./.build/arm64-apple-macosx/debug/AiFlyMac"
+    args: ["codesign","--force","--sign","-","--entitlements","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac-entitlement.plist","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac"]
+
+  "C.AiFlyMac-arm64-apple-macosx-debug.module":
+    tool: shell
+    inputs: ["/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/Sources/AiFlyMac/AiFlyMacApp.swift","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/Sources/AiFlyMac/Models.swift","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/Sources/AiFlyMac/Services.swift","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/Sources/AiFlyMac/Views.swift","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/sources"]
+    outputs: ["/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/AiFlyMacApp.swift.o","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/Models.swift.o","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/Services.swift.o","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/Views.swift.o","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/Modules/AiFlyMac.swiftmodule"]
+    description: "Compiling Swift Module 'AiFlyMac' (4 sources)"
+    args: ["/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc","-module-name","AiFlyMac","-emit-dependencies","-emit-module","-emit-module-path","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/Modules/AiFlyMac.swiftmodule","-output-file-map","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/output-file-map.json","-incremental","-c","@/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/AiFlyMac.build/sources","-I","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/Modules","-target","arm64-apple-macosx13.0","-incremental","-enable-batch-mode","-serialize-diagnostics","-index-store-path","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/index/store","-Onone","-enable-testing","-j8","-DSWIFT_PACKAGE","-DDEBUG","-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE","-module-cache-path","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/.build/arm64-apple-macosx/debug/ModuleCache","-parseable-output","-Xfrontend","-entry-point-function-name","-Xfrontend","AiFlyMac_main","-swift-version","5","-plugin-path","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing","-sdk","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk","-F","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks","-I","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-L","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-g","-Xcc","-isysroot","-Xcc","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk","-Xcc","-F","-Xcc","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks","-Xcc","-fPIC","-Xcc","-g","-package-name","aiflymac"]
+
+  "PackageStructure":
+    tool: package-structure-tool
+    inputs: ["/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/Sources/AiFlyMac/","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/Package.swift","/Users/fadelhanoun/Chrome Extensions/Chrome AI/AiFlyMac/Package.resolved"]
+    outputs: ["<PackageStructure>"]
+    description: "Planning build"
+    allow-missing-inputs: true
+
