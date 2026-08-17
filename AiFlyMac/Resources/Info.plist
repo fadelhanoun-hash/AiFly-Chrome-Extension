@@ -26,9 +26,11 @@
     <string>13.0</string>
     <key>LSUIElement</key>
     <true/>
-    <key>NSHighResolutionCapable</key>
-    <true/>
-    <key>NSPrincipalClass</key>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSContactsUsageDescription</key>
+	<string>AiFly uses Contacts access to find people and copy their contact details from the launcher.</string>
+	<key>NSPrincipalClass</key>
     <string>NSApplication</string>
 </dict>
 </plist>

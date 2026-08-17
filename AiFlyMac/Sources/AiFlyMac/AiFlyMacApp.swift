@@ -7,12 +7,6 @@ struct AiFlyMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        Settings {
-            SettingsView()
-                .environmentObject(appDelegate.model)
-                .frame(width: 620, height: 700)
-        }
-
         MenuBarExtra("AiFly", systemImage: "sparkles") {
             Button("Open AiFly") { appDelegate.showLauncher() }
             Divider()
@@ -29,6 +23,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var launcherWindow: LauncherPanel?
     private var settingsWindow: NSWindow?
     private var keyMonitor: Any?
+    private var modifierMonitor: Any?
+    private var shiftWasDown = false
+    private var isResizingLauncher = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -40,7 +37,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                   launcher.isKeyWindow else { return event }
 
             if event.keyCode == 53 {
+                if self.model.webDialogResult != nil {
+                    self.model.closeWebDialog()
+                    return nil
+                }
+                if self.model.showLargePreview {
+                    self.model.showLargePreview = false
+                    return nil
+                }
                 launcher.orderOut(nil)
+                return nil
+            }
+            if self.model.showLargePreview {
+                switch event.keyCode {
+                case 8: self.model.copySelectedFile()          // C
+                case 15: self.model.revealSelection()          // R
+                case 31, 36, 76: self.model.activateSelection() // O / Return
+                case 51: self.model.trashSelectedFile()        // Delete -> Trash
+                default: break
+                }
+                if [8, 15, 31, 36, 76, 51].contains(event.keyCode) { return nil }
+            }
+            if event.keyCode == 48, self.model.querySuggestion != nil {
+                self.model.acceptQuerySuggestion()
+                NotificationCenter.default.post(name: .focusLauncher, object: nil)
+                return nil
+            }
+            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            let editingSearchField = launcher.firstResponder is NSTextView
+            let isHorizontalArrow = event.keyCode == 123 || event.keyCode == 124
+            let isModifiedArrow = [123, 124, 125, 126].contains(event.keyCode)
+                && !modifiers.intersection([.command, .option]).isEmpty
+            if editingSearchField && (isHorizontalArrow || isModifiedArrow) {
+                return event
+            }
+            if self.model.mode == .files,
+               modifiers.contains(.option),
+               (event.keyCode == 36 || event.keyCode == 76),
+               self.model.selectedFile?.isDirectory == true {
+                self.model.openSelectedFolderExternally()
+                return nil
+            }
+            if self.model.mode == .notes {
+                switch event.keyCode {
+                case 126: self.model.moveNoteSelection(-1)
+                case 125: self.model.moveNoteSelection(1)
+                default: return event
+                }
                 return nil
             }
             guard self.model.mode == .files else { return event }
@@ -58,6 +101,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             return nil
         }
+        modifierMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+            guard let self,
+                  let launcher = self.launcherWindow,
+                  launcher.isKeyWindow,
+                  self.model.mode == .files else { return event }
+            let shiftDown = event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.shift)
+            if shiftDown && !self.shiftWasDown
+                && self.model.hasActivatedResultPreview
+                && (self.model.selectedFile != nil || self.model.selectedWebResult != nil) {
+                self.model.showLargePreview.toggle()
+            }
+            self.shiftWasDown = shiftDown
+            return event
+        }
         NotificationCenter.default.addObserver(
             forName: .hotKeyChanged,
             object: nil,
@@ -71,6 +128,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in self?.configureLaunchAtLogin() }
+        }
+        NotificationCenter.default.addObserver(forName: .openSettings, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.showSettings() }
         }
     }
 
@@ -106,6 +166,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func showLauncher() {
+        settingsWindow?.orderOut(nil)
         if launcherWindow == nil {
             let defaults = UserDefaults.standard
             let savedWidth = defaults.double(forKey: "launcherWidth")
@@ -114,11 +175,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 width: savedWidth >= 720 ? savedWidth : 820,
                 height: savedHeight >= 500 ? savedHeight : 560
             )
+            let savedX = defaults.object(forKey: "launcherX") as? Double
+            let savedY = defaults.object(forKey: "launcherY") as? Double
+            let savedOrigin = savedX.flatMap { x in savedY.map { NSPoint(x: x, y: $0) } }
+            let proposedFrame = NSRect(origin: savedOrigin ?? .zero, size: initialSize)
+            let hasVisibleSavedFrame = savedOrigin != nil && NSScreen.screens.contains {
+                $0.visibleFrame.intersection(proposedFrame).width >= 120
+                    && $0.visibleFrame.intersection(proposedFrame).height >= 80
+            }
             let launcherView = LauncherView()
                 .environmentObject(model)
-                .preferredColorScheme(.light)
             let window = LauncherPanel(
-                contentRect: NSRect(origin: .zero, size: initialSize),
+                contentRect: hasVisibleSavedFrame ? proposedFrame : NSRect(origin: .zero, size: initialSize),
                 styleMask: [.borderless, .resizable],
                 backing: .buffered,
                 defer: false
@@ -135,12 +203,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.hasShadow = true
             window.animationBehavior = .utilityWindow
             launcherWindow = window
+            if !hasVisibleSavedFrame { window.center() }
         }
         NSApp.activate(ignoringOtherApps: true)
         guard let window = launcherWindow else { return }
-        window.center()
         window.makeKeyAndOrderFront(nil)
         NotificationCenter.default.post(name: .focusLauncher, object: nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            NotificationCenter.default.post(name: .focusLauncher, object: nil)
+        }
     }
 
     func showSettings() {
@@ -168,7 +239,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func windowDidResignKey(_ notification: Notification) {
         guard let window = notification.object as? NSWindow,
               window.identifier?.rawValue == "launcher" else { return }
-        window.orderOut(nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self, weak window] in
+            guard let self, let window,
+                  !self.isResizingLauncher,
+                  !window.isKeyWindow else { return }
+            window.orderOut(nil)
+        }
+    }
+
+    func windowWillStartLiveResize(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow,
+              window.identifier?.rawValue == "launcher" else { return }
+        isResizingLauncher = true
+    }
+
+    func windowDidEndLiveResize(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow,
+              window.identifier?.rawValue == "launcher" else { return }
+        isResizingLauncher = false
+        window.makeKey()
+        NotificationCenter.default.post(name: .focusLauncher, object: nil)
     }
 
     func windowDidResize(_ notification: Notification) {
@@ -176,6 +266,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
               window.identifier?.rawValue == "launcher" else { return }
         UserDefaults.standard.set(window.frame.width, forKey: "launcherWidth")
         UserDefaults.standard.set(window.frame.height, forKey: "launcherHeight")
+    }
+
+    func windowDidMove(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow,
+              window.identifier?.rawValue == "launcher" else { return }
+        UserDefaults.standard.set(window.frame.origin.x, forKey: "launcherX")
+        UserDefaults.standard.set(window.frame.origin.y, forKey: "launcherY")
     }
 
     private func filterIndex(for keyCode: UInt16) -> Int? {
@@ -193,4 +290,5 @@ extension Notification.Name {
     static let focusLauncher = Notification.Name("AiFly.focusLauncher")
     static let hotKeyChanged = Notification.Name("AiFly.hotKeyChanged")
     static let launchAtLoginChanged = Notification.Name("AiFly.launchAtLoginChanged")
+    static let openSettings = Notification.Name("AiFly.openSettings")
 }
