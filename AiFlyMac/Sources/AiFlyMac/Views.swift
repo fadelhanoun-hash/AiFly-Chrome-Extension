@@ -8,6 +8,8 @@ struct LauncherView: View {
     @EnvironmentObject private var model: AppModel
     @FocusState private var searchFocused: Bool
     @State private var showingQuickMenu = false
+    @State private var zoomStartFontSize: Double?
+    @GestureState private var liveChatMagnification: CGFloat = 1
 
     var body: some View {
         VStack(spacing: 0) {
@@ -408,22 +410,14 @@ struct LauncherView: View {
                         }
                         ForEach(model.messages) { message in
                             if message.role == "assistant" {
-                                VStack(alignment: .leading, spacing: 7) {
+                                VStack(alignment: .leading, spacing: 9) {
                                     RichHTMLView(
                                         fragment: message.content,
-                                        theme: .paperWhite,
+                                        theme: model.settings.theme,
                                         fontSize: model.aiFontSize,
                                         onSelectionChange: { model.selectedResponseText[message.id] = $0 },
                                         onChange: { model.updateMessageContent(id: message.id, html: $0) }
                                     )
-                                    .padding(14)
-                                    .background(Color.white)
-                                    .overlay {
-                                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                            .stroke(Color.black.opacity(0.10), lineWidth: 1)
-                                    }
-                                    .shadow(color: Color.black.opacity(0.06), radius: 5, y: 2)
-                                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
 
                                     ResponseActions(messageID: message.id)
                                         .environmentObject(model)
@@ -432,6 +426,7 @@ struct LauncherView: View {
                                 .id(message.id)
                             } else {
                                 Text(message.content)
+                                    .font(.system(size: model.aiFontSize))
                                     .textSelection(.enabled)
                                     .padding(12)
                                     .background(model.settings.theme.cardSurface)
@@ -456,6 +451,21 @@ struct LauncherView: View {
             }
         }
         .animation(.easeOut(duration: 0.18), value: model.notePickerMessageID)
+        .scaleEffect(liveChatMagnification, anchor: .top)
+        .clipped()
+        .simultaneousGesture(
+            MagnificationGesture()
+                .updating($liveChatMagnification) { scale, state, _ in
+                    state = min(max(scale, 0.78), 1.45)
+                }
+                .onChanged { _ in
+                    if zoomStartFontSize == nil { zoomStartFontSize = model.aiFontSize }
+                }
+                .onEnded { scale in
+                    model.setAIFontSize((zoomStartFontSize ?? model.aiFontSize) * scale)
+                    zoomStartFontSize = nil
+                }
+        )
     }
 
     private func submit() {
@@ -854,14 +864,16 @@ private struct ResponseActions: View {
                     ActionChip(title: "Table", icon: "tablecells") { Task { await model.redoAsTable(messageID: messageID) } }
                     ActionChip(title: "Follow Up", icon: "arrowshape.turn.up.left") {
                         showingFollowUp.toggle()
-                        if showingFollowUp { DispatchQueue.main.async { followUpFocused = true } }
+                        if showingFollowUp {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { followUpFocused = true }
+                        }
                     }
                     ActionChip(title: "Copy", icon: "doc.on.doc") { model.copyMessage(messageID: messageID) }
                     ActionChip(title: "Find Image", icon: "photo.on.rectangle.angled") { model.findImage(messageID: messageID) }
                     ActionChip(title: "Computer", icon: "desktopcomputer") { model.findOnComputer(messageID: messageID) }
                     ActionChip(title: "Save to Note", icon: "note.text.badge.plus") { model.openNotePicker(messageID: messageID) }
                     if let note = model.lastSavedNote {
-                        ActionChip(title: "Save to \(note.title)", icon: "tray.and.arrow.down") {
+                        ActionChip(title: "Save · \(shortNoteTitle(note.title))", icon: "tray.and.arrow.down") {
                             model.saveToLastNote(messageID: messageID)
                         }
                     }
@@ -873,6 +885,7 @@ private struct ResponseActions: View {
                 HStack(spacing: 8) {
                     TextField("Ask a follow-up about this response…", text: $followUpText)
                         .textFieldStyle(.plain)
+                        .font(.system(size: model.aiFontSize))
                         .focused($followUpFocused)
                         .onSubmit { sendFollowUp() }
                     Button(action: sendFollowUp) {
@@ -888,12 +901,16 @@ private struct ResponseActions: View {
                 }
                 .padding(.leading, 12).padding(.trailing, 7)
                 .frame(height: 38)
-                .background(Color.white)
+                .background(model.settings.theme.cardSurface)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .overlay { RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color.black.opacity(0.10)) }
             }
         }
         .animation(.easeOut(duration: 0.16), value: showingFollowUp)
+    }
+
+    private func shortNoteTitle(_ title: String) -> String {
+        title.count > 15 ? String(title.prefix(15)) + "…" : title
     }
 
     private func sendFollowUp() {
@@ -910,19 +927,30 @@ private struct ActionChip: View {
     let title: String
     let icon: String
     let action: () -> Void
+    @State private var hovering = false
+    @State private var clicked = false
 
     var body: some View {
-        Button(action: action) {
+        Button {
+            clicked = true
+            action()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) { clicked = false }
+        } label: {
             Label(title, systemImage: icon)
-                .font(.caption2.weight(.semibold))
+                .font(.system(size: min(max(model.aiFontSize * 0.78, 10.5), 15), weight: .semibold))
                 .lineLimit(1)
                 .padding(.horizontal, 9)
-                .frame(height: 26)
-                .background(model.settings.theme.cardSurface)
+                .frame(height: max(26, model.aiFontSize + 13))
+                .foregroundStyle((hovering || clicked) ? Color.accentColor : model.settings.theme.primaryText.opacity(0.72))
+                .background((hovering || clicked) ? Color.accentColor.opacity(clicked ? 0.22 : 0.12) : model.settings.theme.cardSurface)
                 .clipShape(Capsule())
-                .overlay { Capsule().stroke(Color.black.opacity(0.09), lineWidth: 1) }
+                .overlay { Capsule().stroke((hovering || clicked) ? Color.accentColor.opacity(0.45) : Color.black.opacity(0.09), lineWidth: 1) }
         }
         .buttonStyle(.plain)
+        .scaleEffect(clicked ? 0.97 : 1)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+        .animation(.easeOut(duration: 0.10), value: clicked)
     }
 }
 
@@ -1084,7 +1112,7 @@ private struct HTMLWebView: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
-        if context.coordinator.loadedFragment != fragment || context.coordinator.loadedFontSize != fontSize {
+        if context.coordinator.loadedFragment != fragment {
             context.coordinator.loadedFragment = fragment
             context.coordinator.loadedFontSize = fontSize
             let cleanFragment = fragment
@@ -1095,14 +1123,20 @@ private struct HTMLWebView: NSViewRepresentable {
         <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">
         <meta name="color-scheme" content="light">
         <style>
-        *{box-sizing:border-box} body{margin:0;color:\(theme.htmlText);background:transparent;font:\(fontSize)px -apple-system,BlinkMacSystemFont,sans-serif;line-height:1.48;overflow:hidden;cursor:text;outline:none;min-height:30px}
+        *{box-sizing:border-box;max-width:100%} html,body{width:100%;max-width:100%} body{margin:0;color:\(theme.htmlText);background:transparent;font:\(fontSize)px -apple-system,BlinkMacSystemFont,sans-serif;line-height:1.48;overflow:hidden;overflow-wrap:anywhere;word-break:normal;cursor:text;outline:none;min-height:30px}
         p{margin:0 0 9px} p:last-child{margin-bottom:0} strong{font-weight:700;color:\(theme.htmlHeading)}
         ul,ol{margin:5px 0 9px;padding-left:21px} li{margin:3px 0}
-        table{width:100%;border-collapse:collapse;margin:8px 0;font-size:13px} th{background:#eef2ff;font-weight:700;text-align:left} th,td{border:1px solid #dbe1ea;padding:6px 8px;vertical-align:top}
+        table{width:100%;table-layout:fixed;border-collapse:collapse;margin:8px 0;font-size:.93em} th{background:#eef2ff;font-weight:700;text-align:left} th,td{border:1px solid #dbe1ea;padding:6px 8px;vertical-align:top;overflow-wrap:anywhere} img,video{display:block;max-width:100%;height:auto}
         h1,h2,h3{font-size:15px;margin:10px 0 5px;color:\(theme.htmlHeading)} a{color:#2563eb}
         </style></head><body contenteditable="true" spellcheck="true">\(cleanFragment)</body></html>
         """
             webView.loadHTMLString(document, baseURL: nil)
+        } else if context.coordinator.loadedFontSize != fontSize {
+            context.coordinator.loadedFontSize = fontSize
+            webView.evaluateJavaScript("document.body.style.fontSize='\(fontSize)px'; Math.ceil(document.documentElement.scrollHeight)") { value, _ in
+                guard let height = value as? NSNumber else { return }
+                DispatchQueue.main.async { contentHeight = max(34, min(CGFloat(truncating: height), 6000)) }
+            }
         }
         if context.coordinator.findText != findText {
             context.coordinator.findText = findText
@@ -1415,7 +1449,7 @@ extension LauncherTheme {
         case .midnight: return Color(red: 0.025, green: 0.06, blue: 0.12)
         case .frost: return Color(red: 0.88, green: 0.92, blue: 0.96)
         case .plum: return Color(red: 0.20, green: 0.09, blue: 0.24)
-        case .paperWhite: return Color.white
+        case .paperWhite: return Color(nsColor: .windowBackgroundColor)
         case .warmWhite: return Color(red: 0.98, green: 0.96, blue: 0.92)
         }
     }

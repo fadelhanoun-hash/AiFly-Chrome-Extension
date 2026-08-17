@@ -719,6 +719,16 @@ enum AIService {
         }
     }
 
+    static func completion(for term: String, settings: AppSettings) async -> String? {
+        let prompt = "Autocomplete this medical or general question. Return only one short completed question beginning exactly with these characters, with no explanation: \(term)"
+        guard let raw = try? await respond(to: prompt, history: [], settings: settings) else { return nil }
+        let withoutTags = raw.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "&nbsp;", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard withoutTags.lowercased().hasPrefix(term.lowercased()), withoutTags.count > term.count else { return nil }
+        return String(withoutTags.prefix(180))
+    }
+
     private static func openAI(_ question: String, history: [ChatMessage], key: String) async throws -> String {
         guard !key.isEmpty else { throw ServiceError.missingKey("OpenAI") }
         var messages = [["role": "system", "content": medicalHTMLPrompt]]

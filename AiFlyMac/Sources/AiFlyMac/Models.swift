@@ -335,7 +335,11 @@ final class AppModel: ObservableObject {
     }
 
     func adjustAIFontSize(by amount: Double) {
-        aiFontSize = min(max(aiFontSize + amount, 11), 24)
+        setAIFontSize(aiFontSize + amount)
+    }
+
+    func setAIFontSize(_ size: Double) {
+        aiFontSize = min(max(size, 11), 24)
         settings.aiFontSize = aiFontSize
     }
 
@@ -435,6 +439,7 @@ final class AppModel: ObservableObject {
                 if $0.isDirectory != $1.isDirectory { return $0.isDirectory }
                 return $0.name.localizedStandardCompare($1.name) == .orderedAscending
             }
+            updateMacQuerySuggestion(for: term)
             if let pendingRestoredFilter, availableFormatFilters.contains(pendingRestoredFilter) {
                 selectedFormatFilter = pendingRestoredFilter
             }
@@ -520,7 +525,7 @@ final class AppModel: ObservableObject {
             default: return result.engineID == "google_drive_file" && (result.title as NSString).pathExtension.uppercased() == selectedFormatFilter
             }
         }.map(MacSearchResult.web)
-        var ordered = applications + folders + contacts + remoteDrive + files
+        let ordered = applications + folders + contacts + remoteDrive + files
         let term = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if ordered.isEmpty, !term.isEmpty, searchRoot == nil {
             return fallbackWebResults(for: term).map(MacSearchResult.web)
@@ -536,21 +541,28 @@ final class AppModel: ObservableObject {
 
     private func matchScore(for result: MacSearchResult, term: String) -> Int {
         let candidates: [String]
+        var recencyBonus = 0
         switch result {
         case .contact(let contact):
             candidates = [contact.displayName.lowercased(), contact.organization.lowercased()]
         case .file(let file):
-            candidates = [file.name.lowercased(), file.url.deletingPathExtension().lastPathComponent.lowercased()]
+            candidates = [file.name.lowercased(), file.url.deletingPathExtension().lastPathComponent.lowercased(), file.url.deletingLastPathComponent().lastPathComponent.lowercased()]
+            let recentItems = recentApplications + recentFiles
+            if let index = recentItems.firstIndex(where: { $0.url.standardizedFileURL == file.url.standardizedFileURL }) {
+                recencyBonus = max(15, 90 - index * 6)
+            }
         case .web(let web):
             candidates = [web.title.lowercased(), web.subtitle.lowercased()]
         }
-        return candidates.map { value in
+        let textScore = candidates.enumerated().map { index, value in
+            let folderPenalty = index >= 2 ? 70 : 0
             if value == term { return 0 }
-            if value.hasPrefix(term) { return 1 }
-            if value.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).contains(where: { $0.hasPrefix(term) }) { return 2 }
-            if value.contains(term) { return 3 }
-            return 4
-        }.min() ?? 4
+            if value.hasPrefix(term) { return 100 + folderPenalty }
+            if value.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).contains(where: { $0.hasPrefix(term) }) { return 200 + folderPenalty }
+            if value.contains(term) { return 300 + folderPenalty }
+            return 500
+        }.min() ?? 500
+        return max(0, textScore - recencyBonus)
     }
 
     func selectFormatFilter(at index: Int) {
@@ -649,13 +661,29 @@ final class AppModel: ObservableObject {
             querySuggestion = nil
             return
         }
-        suggestionTask = Task {
-            try? await Task.sleep(for: .milliseconds(180))
-            guard !Task.isCancelled else { return }
-            let suggestion = await WebSearchService.completion(for: term)
-            guard !Task.isCancelled, query.trimmingCharacters(in: .whitespacesAndNewlines) == term else { return }
-            querySuggestion = suggestion
-        }
+        if mode == .files {
+            updateMacQuerySuggestion(for: term)
+        } else if mode == .ask {
+            suggestionTask = Task {
+                try? await Task.sleep(for: .milliseconds(350))
+                guard !Task.isCancelled else { return }
+                let suggestion = await AIService.completion(for: term, settings: settings)
+                guard !Task.isCancelled, mode == .ask,
+                      query.trimmingCharacters(in: .whitespacesAndNewlines) == term else { return }
+                querySuggestion = suggestion
+            }
+        } else { querySuggestion = nil }
+    }
+
+    private func updateMacQuerySuggestion(for term: String) {
+        guard mode == .files, !term.isEmpty else { querySuggestion = nil; return }
+        querySuggestion = visibleSearchResults.compactMap { result -> String? in
+            switch result {
+            case .file(let file): return file.url.pathExtension.lowercased() == "app" ? file.url.deletingPathExtension().lastPathComponent : file.name
+            case .contact(let contact): return contact.displayName
+            case .web(let web): return web.title
+            }
+        }.first { $0.count > term.count && $0.lowercased().hasPrefix(term.lowercased()) }
     }
 
     func switchToAI() {
@@ -729,6 +757,7 @@ final class AppModel: ObservableObject {
             let matches = await InstalledApplicationSearch.find(term)
             guard !Task.isCancelled else { return }
             applicationResults = matches
+            updateMacQuerySuggestion(for: term)
             selection = min(selection, max(0, visibleSearchResults.count - 1))
         }
     }
@@ -745,6 +774,7 @@ final class AppModel: ObservableObject {
             let matches = await FolderNameSearch.find(term)
             guard !Task.isCancelled else { return }
             folderResults = applySearchRules(to: matches)
+            updateMacQuerySuggestion(for: term)
             selection = min(selection, max(0, visibleSearchResults.count - 1))
         }
     }
@@ -768,6 +798,7 @@ final class AppModel: ObservableObject {
             guard !Task.isCancelled else { isIndexingGoogleDrive = false; return }
             googleDriveResults = applySearchRules(to: matches)
             googleDriveCatalogResults = catalog
+            updateMacQuerySuggestion(for: term)
             selection = min(selection, max(0, visibleSearchResults.count - 1))
             isIndexingGoogleDrive = false
         }
