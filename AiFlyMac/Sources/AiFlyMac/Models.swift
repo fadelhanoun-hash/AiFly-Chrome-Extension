@@ -6,6 +6,8 @@ enum LauncherMode: String, CaseIterable, Identifiable {
     case files = "Search Mac"
     case ask = "Ask AI"
     case notes = "Notes"
+    case google = "Google"
+    case images = "Images"
     var id: String { rawValue }
 }
 
@@ -302,6 +304,10 @@ final class AppModel: ObservableObject {
     @Published var showLargePreview = false
     @Published var hasActivatedResultPreview = false
     @Published var webDialogResult: WebSearchResult?
+    @Published var googleSearchURL: URL?
+    @Published var imageResults: [WebSearchResult] = []
+    @Published var selectedImageResult: WebSearchResult?
+    @Published var imageSearchURL: URL?
     @Published var querySuggestion: String?
     @Published var learnedTargetBonuses: [String: Int] = [:]
     var settings = AppSettings()
@@ -320,8 +326,13 @@ final class AppModel: ObservableObject {
     private let savedNotesKey = "AiFly.savedNotes"
     private let lastSavedNoteIDKey = "AiFly.lastSavedNoteID"
     private let lastLauncherModeKey = "AiFly.lastLauncherMode"
+    private let searchHistoryKey = "AiFly.searchHistory"
     private var questionHistoryIndex: Int?
     private var questionHistoryDraft = ""
+    private var searchHistory: [String] = []
+    private var searchHistoryIndex: Int?
+    private var searchHistoryDraft = ""
+    private var lastModeSubmittedAIQuery: String?
 
     init() {
         aiFontSize = settings.aiFontSize
@@ -336,6 +347,7 @@ final class AppModel: ObservableObject {
         if let value = UserDefaults.standard.string(forKey: lastSavedNoteIDKey) {
             lastSavedNoteID = UUID(uuidString: value)
         }
+        searchHistory = UserDefaults.standard.stringArray(forKey: searchHistoryKey) ?? []
         startPersistentIndexUpdates()
         startGoogleDriveRefreshes()
     }
@@ -401,6 +413,18 @@ final class AppModel: ObservableObject {
         if mode == .notes {
             querySuggestion = nil
             noteListSelection = min(noteListSelection, max(0, launcherNotes.count - 1))
+            return
+        }
+        if mode == .google || mode == .images {
+            let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            updateQuerySuggestion(for: term)
+            if term.isEmpty {
+                if mode == .google { googleSearchURL = nil }
+                imageResults = []
+                selectedImageResult = nil
+                imageSearchURL = nil
+                querySuggestion = nil
+            }
             return
         }
         searchTask?.cancel()
@@ -788,6 +812,88 @@ final class AppModel: ObservableObject {
         UserDefaults.standard.set(mode.rawValue, forKey: lastLauncherModeKey)
     }
 
+    func cycleLauncherMode(_ direction: Int) {
+        let modes = LauncherMode.allCases
+        guard let current = modes.firstIndex(of: mode) else { return }
+        mode = modes[(current + direction + modes.count) % modes.count]
+        querySuggestion = nil
+        rememberLauncherMode()
+    }
+
+    func performCurrentModeCommand() {
+        let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !term.isEmpty else {
+            updateSearch()
+            return
+        }
+        switch mode {
+        case .files, .notes:
+            updateSearch()
+        case .google:
+            submitGoogleSearch()
+        case .images:
+            submitImageSearch()
+        case .ask:
+            guard lastModeSubmittedAIQuery != term else { return }
+            lastModeSubmittedAIQuery = term
+            Task { await sendQuestion() }
+        }
+    }
+
+    func rememberCurrentSearch() {
+        let value = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return }
+        searchHistory.removeAll { $0.caseInsensitiveCompare(value) == .orderedSame }
+        searchHistory.insert(value, at: 0)
+        if searchHistory.count > 100 { searchHistory.removeLast(searchHistory.count - 100) }
+        UserDefaults.standard.set(searchHistory, forKey: searchHistoryKey)
+        searchHistoryIndex = nil
+        searchHistoryDraft = ""
+    }
+
+    func cycleSearchHistory(_ direction: Int) {
+        guard !searchHistory.isEmpty else { return }
+        if searchHistoryIndex == nil { searchHistoryDraft = query }
+        guard searchHistoryIndex != nil || direction > 0 else { return }
+        let next = (searchHistoryIndex ?? -1) + direction
+        if next < 0 {
+            query = searchHistoryDraft
+            searchHistoryIndex = nil
+        } else {
+            let bounded = min(next, searchHistory.count - 1)
+            searchHistoryIndex = bounded
+            query = searchHistory[bounded]
+        }
+    }
+
+    func submitGoogleSearch() {
+        let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !term.isEmpty, let engine = settings.webEngines.first(where: { $0.id == "google" }),
+              let escaped = term.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: engine.searchURL + escaped) else { return }
+        rememberCurrentSearch()
+        googleSearchURL = url
+    }
+
+    func submitImageSearch() {
+        let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !term.isEmpty else { return }
+        rememberCurrentSearch()
+        isSearchingWeb = true
+        imageResults = []
+        selectedImageResult = nil
+        if let escaped = term.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
+            imageSearchURL = URL(string: "https://www.google.com/search?tbm=isch&igu=1&q=\(escaped)")
+        }
+        webSearchTask?.cancel()
+        webSearchTask = Task {
+            let matches = await WebSearchService.googleImages(term)
+            guard !Task.isCancelled, mode == .images else { return }
+            imageResults = matches
+            isSearchingWeb = false
+        }
+    }
+
     func acceptQuerySuggestion() {
         guard let querySuggestion else { return }
         query = querySuggestion
@@ -818,6 +924,12 @@ final class AppModel: ObservableObject {
                       query.trimmingCharacters(in: .whitespacesAndNewlines) == term else { return }
                 querySuggestion = suggestion
             }
+        } else if mode == .google || mode == .images {
+            suggestionTask = Task {
+                let suggestion = await WebSearchService.completion(for: term)
+                guard !Task.isCancelled, query.trimmingCharacters(in: .whitespacesAndNewlines) == term else { return }
+                querySuggestion = suggestion
+            }
         } else { querySuggestion = nil }
     }
 
@@ -834,13 +946,12 @@ final class AppModel: ObservableObject {
 
     func switchToAI() {
         mode = .ask
-        query = ""
         errorMessage = nil
+        updateSearch()
     }
 
     func switchToMacSearch() {
         mode = .files
-        query = ""
         results = []
         selection = 0
         selectedFormatFilter = nil
@@ -851,6 +962,7 @@ final class AppModel: ObservableObject {
         showFileActions = false
         errorMessage = nil
         loadRecents()
+        updateSearch()
     }
 
     var selectedContact: ContactResult? {
@@ -1279,9 +1391,8 @@ final class AppModel: ObservableObject {
     }
 
     private func googleDriveLocalURL(for result: WebSearchResult) -> URL? {
-        let prefix = "Google Drive/"
-        guard result.subtitle.hasPrefix(prefix) else { return nil }
-        let relativePath = String(result.subtitle.dropFirst(prefix.count))
+        let relativePath = result.subtitle
+        guard !relativePath.isEmpty else { return nil }
         let cloudStorage = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/CloudStorage", isDirectory: true)
         let roots = (try? FileManager.default.contentsOfDirectory(
@@ -1290,9 +1401,9 @@ final class AppModel: ObservableObject {
             options: [.skipsHiddenFiles]
         ))?.filter { $0.lastPathComponent.lowercased().hasPrefix("googledrive-") } ?? []
         for root in roots {
-            let localURL = root.appendingPathComponent(relativePath)
-            if FileManager.default.fileExists(atPath: localURL.path) {
-                return localURL
+            for driveRoot in ["My Drive", "Shared drives"] {
+                let localURL = root.appendingPathComponent(driveRoot).appendingPathComponent(relativePath)
+                if FileManager.default.fileExists(atPath: localURL.path) { return localURL }
             }
         }
         return nil
@@ -1363,7 +1474,6 @@ final class AppModel: ObservableObject {
     func sendQuestion() async {
         let question = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, !isWorking else { return }
-        query = ""
         questionHistoryIndex = nil
         questionHistoryDraft = ""
         messages.append(ChatMessage(role: "user", content: question))

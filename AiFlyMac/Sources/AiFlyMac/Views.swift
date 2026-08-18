@@ -15,7 +15,7 @@ struct LauncherView: View {
         VStack(spacing: 0) {
             VStack(spacing: 0) {
                 HStack(spacing: 12) {
-                    Image(systemName: model.mode == .files ? "magnifyingglass" : (model.mode == .notes ? "note.text" : "sparkles"))
+                    Image(systemName: modeIcon)
                         .font(.system(size: 19, weight: .semibold))
                         .foregroundStyle(.secondary)
                     ZStack(alignment: .leading) {
@@ -40,7 +40,7 @@ struct LauncherView: View {
                     }
                     .labelsHidden()
                     .pickerStyle(.segmented)
-                    .frame(width: 310)
+                    .frame(width: 470)
                     Button { showingQuickMenu.toggle() } label: {
                         Image(systemName: "ellipsis").font(.system(size: 16, weight: .semibold))
                     }
@@ -83,6 +83,8 @@ struct LauncherView: View {
                 case .files: fileResults
                 case .ask: chat
                 case .notes: notesList
+                case .google: googleSearch
+                case .images: imageSearch
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -119,7 +121,7 @@ struct LauncherView: View {
         .onChange(of: model.query) { _ in model.updateSearch() }
         .onChange(of: model.mode) { _ in
             model.rememberLauncherMode()
-            model.updateSearch()
+            model.performCurrentModeCommand()
             searchFocused = true
         }
         .onReceive(NotificationCenter.default.publisher(for: .focusLauncher)) { _ in focusSearchField() }
@@ -132,6 +134,18 @@ struct LauncherView: View {
         case .files: return model.searchPlaceholder
         case .ask: return "Ask AiFly anything…"
         case .notes: return "Search notes…"
+        case .google: return "Search Google…"
+        case .images: return "Search Google Images…"
+        }
+    }
+
+    private var modeIcon: String {
+        switch model.mode {
+        case .files: return "magnifyingglass"
+        case .ask: return "sparkles"
+        case .notes: return "note.text"
+        case .google: return "globe"
+        case .images: return "photo.on.rectangle.angled"
         }
     }
 
@@ -247,7 +261,10 @@ struct LauncherView: View {
                                             model.selectSearchResult(at: index)
                                             item.isDirectory ? model.enterFolder(item.url) : model.activateSelection()
                                         }
-                                        .onTapGesture { model.selectSearchResult(at: index); model.hideActions(); model.hideContactDetails() }
+                                        .onTapGesture {
+                                            model.selectSearchResult(at: index); model.hideActions(); model.hideContactDetails()
+                                            if item.isDirectory { model.enterFolder(item.url) }
+                                        }
                                         .contextMenu {
                                             if item.isDirectory {
                                                 Button("Open Folder Here") {
@@ -278,7 +295,8 @@ struct LauncherView: View {
                                         .onTapGesture {
                                             model.selectSearchResult(at: index)
                                             model.hideActions(); model.hideContactDetails()
-                                            if result.isFallback { model.openWebDialog(result) }
+                                            if result.engineID == "google_drive_folder" { model.focusGoogleDriveFolder(result) }
+                                            else if result.isFallback { model.openWebDialog(result) }
                                         }
                                     }
                             }
@@ -471,7 +489,101 @@ struct LauncherView: View {
         )
     }
 
+    private var googleSearch: some View {
+        Group {
+            if let url = model.googleSearchURL {
+                VStack(spacing: 0) {
+                    HStack {
+                        Text("Google results").font(.subheadline.weight(.semibold))
+                        Spacer()
+                        Button { NSWorkspace.shared.open(url) } label: {
+                            Label("Open in Browser", systemImage: "arrow.up.right.square")
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(height: 38)
+
+                    EmbeddedWebView(url: url)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 12)
+            } else {
+                EmptyStateView(title: "Search Google", systemImage: "globe", description: "Type above and press Return to view results here.")
+            }
+        }
+    }
+
+    private var imageSearch: some View {
+        ZStack {
+            if model.isSearchingWeb && model.imageSearchURL == nil {
+                EmptyStateView(
+                    title: "Finding images…",
+                    systemImage: "photo.on.rectangle.angled",
+                    description: "Type above and press Return for a gallery."
+                )
+            } else if model.imageResults.isEmpty, let url = model.imageSearchURL {
+                GoogleImageGalleryWebView(url: url)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .padding(12)
+            } else if model.imageResults.isEmpty {
+                EmptyStateView(
+                    title: "Search Google Images",
+                    systemImage: "photo.on.rectangle.angled",
+                    description: "Type above and press Return for a gallery."
+                )
+            } else {
+                ScrollView {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 4), spacing: 10) {
+                        ForEach(model.imageResults) { result in
+                            Button { model.selectedImageResult = result } label: {
+                                AsyncImage(url: result.thumbnailURL) { phase in
+                                    if let image = phase.image { image.resizable().scaledToFill() }
+                                    else { Rectangle().fill(model.settings.theme.cardSurface).overlay { ProgressView() } }
+                                }
+                                .frame(height: 128).clipped()
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(14)
+                }
+            }
+            if let result = model.selectedImageResult { imageActions(result) }
+        }
+    }
+
+    private func imageActions(_ result: WebSearchResult) -> some View {
+        VStack(spacing: 12) {
+            AsyncImage(url: result.thumbnailURL) { phase in
+                if let image = phase.image { image.resizable().scaledToFit() }
+                else { ProgressView() }
+            }
+            .frame(maxWidth: 560, maxHeight: 330)
+            HStack {
+                Button("Open Image") { if let url = result.thumbnailURL { NSWorkspace.shared.open(url) } }
+                Button("Copy Image Link") {
+                    guard let url = result.thumbnailURL else { return }
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(url.absoluteString, forType: .string)
+                }
+                Button("Open Google Images") { NSWorkspace.shared.open(result.url) }
+                Button("Close") { model.selectedImageResult = nil }
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding(18)
+        .background(.ultraThinMaterial)
+        .background(model.settings.theme.background.opacity(0.96))
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .shadow(color: .black.opacity(0.25), radius: 28, y: 10)
+        .padding(24)
+    }
+
     private func submit() {
+        model.rememberCurrentSearch()
         if model.mode == .files && model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             if model.recentSelection >= 0 { model.activateSelection() }
             else { model.switchToAI() }
@@ -480,6 +592,10 @@ struct LauncherView: View {
         }
         else if model.mode == .notes {
             return
+        } else if model.mode == .google {
+            model.submitGoogleSearch()
+        } else if model.mode == .images {
+            model.submitImageSearch()
         } else if model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             model.switchToMacSearch()
         } else {
@@ -836,6 +952,33 @@ private struct EmbeddedWebView: NSViewRepresentable {
     func updateNSView(_ webView: WKWebView, context: Context) {
         guard webView.url != url else { return }
         webView.load(URLRequest(url: url))
+    }
+}
+
+private struct GoogleImageGalleryWebView: NSViewRepresentable {
+    let url: URL
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .default()
+        let view = WKWebView(frame: .zero, configuration: configuration)
+        view.navigationDelegate = context.coordinator
+        view.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Safari/605.1.15"
+        view.setValue(false, forKey: "drawsBackground")
+        return view
+    }
+
+    func updateNSView(_ webView: WKWebView, context: Context) {
+        guard webView.url != url else { return }
+        webView.load(URLRequest(url: url))
+    }
+
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            webView.evaluateJavaScript("window.scrollTo(0, 0)")
+        }
     }
 }
 

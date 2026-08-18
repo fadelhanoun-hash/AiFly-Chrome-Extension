@@ -14,3 +14,8 @@ The default shortcut is **Option + Space**. File search uses the Mac Spotlight i
 ## App-store packaging
 
 The Swift package is intentionally dependency-free. For distribution, create a macOS App target in Xcode using the files in `Sources/AiFlyMac`, add an app icon, enable outgoing network connections in App Sandbox, then sign and notarize the archive.
+# Packaging
+
+Run `Scripts/package-app.sh` for release builds. It signs AiFly with the stable
+Apple Development identity so macOS privacy permissions, including Contacts,
+survive app reinstalls.

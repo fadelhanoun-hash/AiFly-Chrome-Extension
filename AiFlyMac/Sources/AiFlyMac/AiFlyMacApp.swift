@@ -58,8 +58,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
                 if [8, 15, 31, 36, 76, 51].contains(event.keyCode) { return nil }
             }
-            if event.keyCode == 48, self.model.querySuggestion != nil {
-                self.model.acceptQuerySuggestion()
+            if event.keyCode == 48 {
+                let backwards = event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.shift)
+                self.model.cycleLauncherMode(backwards ? -1 : 1)
                 NotificationCenter.default.post(name: .focusLauncher, object: nil)
                 return nil
             }
@@ -74,6 +75,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 && self.model.hasActivatedResultPreview
                 && ((event.keyCode == 124 && selectedFolderCanOpen)
                     || (event.keyCode == 123 && self.model.searchRoot != nil))
+            if editingSearchField, isHorizontalArrow, modifiers.intersection([.command, .option, .shift]).isEmpty,
+               let editor = launcher.firstResponder as? NSTextView {
+                let selection = editor.selectedRange()
+                let atLeftBoundary = event.keyCode == 123 && selection.location == 0
+                let atRightBoundary = event.keyCode == 124 && selection.length == 0
+                    && selection.location >= (editor.string as NSString).length
+                if atLeftBoundary || atRightBoundary {
+                    self.model.cycleSearchHistory(atLeftBoundary ? 1 : -1)
+                    NotificationCenter.default.post(name: .focusLauncher, object: nil)
+                    return nil
+                }
+            }
             if editingSearchField && (isHorizontalArrow || isModifiedArrow) && !folderArrowNavigation {
                 return event
             }

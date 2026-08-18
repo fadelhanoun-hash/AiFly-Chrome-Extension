@@ -22,6 +22,25 @@ enum WebSearchService {
         return [makeDirectResult(engine: engine, term: term, subtitle: "Open in \(engine.name)")].compactMap { $0 }
     }
 
+    static func googleImages(_ term: String) async -> [WebSearchResult] {
+        guard let escaped = term.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let searchURL = URL(string: "https://www.google.com/search?tbm=isch&q=\(escaped)") else { return [] }
+        var request = URLRequest(url: searchURL)
+        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Safari/605.1.15", forHTTPHeaderField: "User-Agent")
+        guard let (data, _) = try? await URLSession.shared.data(for: request),
+              let html = String(data: data, encoding: .utf8) else { return [] }
+        let pattern = #"https://encrypted-tbn[0-9]\.gstatic\.com/images\?[^\" ]+"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let range = NSRange(html.startIndex..<html.endIndex, in: html)
+        var seen = Set<String>()
+        return regex.matches(in: html, range: range).compactMap { match in
+            guard let swiftRange = Range(match.range, in: html) else { return nil }
+            let raw = String(html[swiftRange]).replacingOccurrences(of: "&amp;", with: "&")
+            guard seen.insert(raw).inserted, let thumbnail = URL(string: raw) else { return nil }
+            return WebSearchResult(id: "image|\(raw)", engineID: "images", title: term, subtitle: "Google Images", url: searchURL, thumbnailURL: thumbnail, isFallback: false)
+        }.prefix(40).map { $0 }
+    }
+
     private static func makeDirectResult(engine: WebSearchEngine, term: String, subtitle: String) -> WebSearchResult? {
         guard let escaped = term.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(string: engine.searchURL + escaped) else { return nil }
@@ -396,17 +415,30 @@ enum GoogleDriveCatalogSearch {
                     let isFolder = fields[3] == "1"
                     let isMedia = fields[2].hasPrefix("image/") || fields[2].hasPrefix("video/")
                     let thumbnail = isMedia ? URL(string: "https://drive.google.com/thumbnail?id=\(fields[0])&sz=w240-h180") : nil
+                    let displayPath = cleanDrivePath(parentPath: fields[4], title: fields[1])
                     results.append(WebSearchResult(
                         id: "google-drive|\(fields[0])",
                         engineID: isFolder ? "google_drive_folder" : "google_drive_file",
                         title: fields[1],
-                        subtitle: "Google Drive/\(fields[4])/\(fields[1])",
+                        subtitle: displayPath,
                         url: url, thumbnailURL: thumbnail, isFallback: false
                     ))
                 }
             } catch { continue }
         }
         return results.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+    }
+
+    private static func cleanDrivePath(parentPath: String, title: String) -> String {
+        let components = parentPath.split(separator: "/").map(String.init)
+        let rootIndex = components.lastIndex {
+            $0.caseInsensitiveCompare("My Drive") == .orderedSame
+                || $0.caseInsensitiveCompare("Shared drives") == .orderedSame
+        }
+        let visibleParents = rootIndex.map { Array(components.dropFirst($0 + 1)) } ?? components.filter {
+            !$0.allSatisfy(\.isNumber) && !$0.lowercased().hasPrefix("google-drive-")
+        }
+        return (visibleParents + [title]).filter { !$0.isEmpty }.joined(separator: "/")
     }
 }
 
