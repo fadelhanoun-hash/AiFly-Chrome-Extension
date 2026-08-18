@@ -164,17 +164,20 @@ struct LauncherView: View {
             .frame(minWidth: 390, maxWidth: .infinity)
 
             VStack(alignment: .leading, spacing: 14) {
-                FallbackEngineBar()
-                    .environmentObject(model)
-                RecentItemsColumn(
-                    title: "Recent Apps",
-                    systemImage: "square.grid.2x2",
-                    items: model.recentApplications,
-                    isLoading: model.isLoadingRecents,
-                    emptyMessage: "No recent apps found",
-                    gallery: true,
-                    open: model.openRecentItem
-                )
+                if model.recentSelection >= 0, model.selectedFile != nil {
+                    FilePreviewPanel().environmentObject(model)
+                } else {
+                    FallbackEngineBar().environmentObject(model)
+                    RecentItemsColumn(
+                        title: "Recent Apps",
+                        systemImage: "square.grid.2x2",
+                        items: model.recentApplications,
+                        isLoading: model.isLoadingRecents,
+                        emptyMessage: "No recent apps found",
+                        gallery: true,
+                        open: model.openRecentItem
+                    )
+                }
             }
             .frame(minWidth: 280, idealWidth: 320, maxWidth: 360)
         }
@@ -470,7 +473,8 @@ struct LauncherView: View {
 
     private func submit() {
         if model.mode == .files && model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            model.switchToAI()
+            if model.recentSelection >= 0 { model.activateSelection() }
+            else { model.switchToAI() }
         } else if model.mode == .files {
             if !model.performAlfredStyleAction() { model.performPrimaryFileAction() }
         }
@@ -537,22 +541,19 @@ private struct RecentItemsColumn: View {
                     }
                 } else {
                     ScrollView {
-                        LazyVStack(spacing: 3) {
+                        LazyVStack(spacing: 9) {
                             ForEach(items) { item in
-                                Button { open(item) } label: {
+                                Button { model.selectRecentItem(item); open(item) } label: {
                                     HStack(spacing: 10) {
                                         Image(nsImage: item.icon)
                                             .resizable()
                                             .frame(width: 30, height: 30)
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(item.name).font(.subheadline.weight(.medium)).lineLimit(1)
-                                            Text(item.folder).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                                        }
+                                        Text(item.name).font(.subheadline.weight(.medium)).lineLimit(1)
                                         Spacer()
                                     }
                                     .padding(.horizontal, 8)
-                                    .frame(height: 46)
-                                    .background(model.settings.theme.cardSurface)
+                                    .frame(height: 50)
+                                    .background(model.recentSelection >= 0 && model.recentFiles.indices.contains(model.recentSelection) && model.recentFiles[model.recentSelection].id == item.id ? model.settings.theme.selection : model.settings.theme.cardSurface)
                                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                                     .contentShape(Rectangle())
                                 }
@@ -1335,8 +1336,14 @@ private struct WebPreviewPanel: View {
             }
             Text(result.title).font(.title3.weight(.semibold)).lineLimit(4)
             Text(result.subtitle).font(.subheadline).foregroundStyle(model.settings.theme.secondaryText)
-            Button { NSWorkspace.shared.open(result.url) } label: {
-                Label("Open in Web", systemImage: "arrow.up.right.square")
+            Button {
+                if result.engineID.hasPrefix("google_drive_") { model.openGoogleDriveResult(result) }
+                else { NSWorkspace.shared.open(result.url) }
+            } label: {
+                Label(
+                    result.engineID == "google_drive_file" ? "Download & Open" : (result.engineID == "google_drive_folder" ? "Open Folder" : "Open in Web"),
+                    systemImage: result.engineID.hasPrefix("google_drive_") ? "arrow.down.circle.fill" : "arrow.up.right.square"
+                )
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)

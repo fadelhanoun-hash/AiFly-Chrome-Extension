@@ -68,7 +68,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let isHorizontalArrow = event.keyCode == 123 || event.keyCode == 124
             let isModifiedArrow = [123, 124, 125, 126].contains(event.keyCode)
                 && !modifiers.intersection([.command, .option]).isEmpty
-            if editingSearchField && (isHorizontalArrow || isModifiedArrow) {
+            let selectedFolderCanOpen = self.model.selectedFile?.isDirectory == true
+                || self.model.selectedWebResult?.engineID == "google_drive_folder"
+            let folderArrowNavigation = self.model.mode == .files
+                && self.model.hasActivatedResultPreview
+                && ((event.keyCode == 124 && selectedFolderCanOpen)
+                    || (event.keyCode == 123 && self.model.searchRoot != nil))
+            if editingSearchField && (isHorizontalArrow || isModifiedArrow) && !folderArrowNavigation {
                 return event
             }
             if self.model.mode == .files,
@@ -84,6 +90,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 case 125: self.model.moveNoteSelection(1)
                 default: return event
                 }
+                return nil
+            }
+            if self.model.mode == .ask && (event.keyCode == 126 || event.keyCode == 125) {
+                self.model.cycleQuestionHistory(event.keyCode == 126 ? -1 : 1)
+                NotificationCenter.default.post(name: .focusLauncher, object: nil)
                 return nil
             }
             guard self.model.mode == .files else { return event }

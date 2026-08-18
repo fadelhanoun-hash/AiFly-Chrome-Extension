@@ -202,36 +202,12 @@ enum InstalledApplicationSearch {
 
     static func find(_ term: String) async -> [FileResult] {
         await Task.detached(priority: .userInitiated) {
-            let escaped = term
-                .replacingOccurrences(of: "\\", with: "\\\\")
-                .replacingOccurrences(of: "\"", with: "\\\"")
-            let expression = "(kMDItemContentType == \"com.apple.application-bundle\") && (kMDItemFSName == \"*\(escaped)*.app\"cd)"
             let homeApplications = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications").path
             let scopes = ["/Applications", "/System/Applications", homeApplications]
             var seen = Set<String>()
             var matches: [FileResult] = []
-
-            for scope in scopes where FileManager.default.fileExists(atPath: scope) {
-                let process = Process()
-                let output = Pipe()
-                process.executableURL = URL(fileURLWithPath: "/usr/bin/mdfind")
-                process.arguments = ["-onlyin", scope, expression]
-                process.standardOutput = output
-                process.standardError = FileHandle.nullDevice
-                do {
-                    try process.run()
-                    let data = output.fileHandleForReading.readDataToEndOfFile()
-                    process.waitUntilExit()
-                    for line in String(decoding: data, as: UTF8.self).split(separator: "\n") {
-                        let url = URL(fileURLWithPath: String(line)).standardizedFileURL
-                        if seen.insert(url.path).inserted { matches.append(FileResult(url: url)) }
-                    }
-                } catch { continue }
-            }
-
-            // Spotlight can omit newly installed, excluded, or not-yet-indexed
-            // application bundles. Scan the application folders directly as a
-            // fallback and merge the results by their permanent file path.
+            // Application folders are small enough to enumerate directly. This
+            // avoids waiting for sequential Spotlight processes on every key.
             let resourceKeys: [URLResourceKey] = [.isDirectoryKey, .isPackageKey, .nameKey]
             for scope in scopes where FileManager.default.fileExists(atPath: scope) {
                 let root = URL(fileURLWithPath: scope, isDirectory: true)
@@ -319,8 +295,6 @@ enum GoogleDriveDirectSearch {
         let legacy = home.appendingPathComponent("Google Drive", isDirectory: true)
         if manager.fileExists(atPath: legacy.path) { roots.append(legacy) }
 
-        let lowered = term.lowercased()
-        let keys: [URLResourceKey] = [.isDirectoryKey, .isHiddenKey, .nameKey]
         var seen = Set<String>()
         var matches: [FileResult] = []
         let escaped = term.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
@@ -346,32 +320,42 @@ enum GoogleDriveDirectSearch {
             } catch { continue }
         }
 
-        // Only recursively scan mounts that currently expose a real Drive root;
-        // stale timestamped mounts can block enumeration indefinitely.
-        let activeRoots = roots.filter { root in
-            manager.fileExists(atPath: root.appendingPathComponent("My Drive").path)
-                || manager.fileExists(atPath: root.appendingPathComponent("Shared drives").path)
-        }
-        for root in activeRoots {
-            guard let enumerator = manager.enumerator(
-                at: root,
-                includingPropertiesForKeys: keys,
-                options: [.skipsHiddenFiles, .skipsPackageDescendants],
-                errorHandler: { _, _ in true }
-            ) else { continue }
-            for case let url as URL in enumerator {
-                if url.lastPathComponent.lowercased().contains(lowered),
-                   seen.insert(url.standardizedFileURL.path).inserted {
-                    matches.append(FileResult(url: url))
-                    if matches.count >= 500 { break }
-                }
-            }
-            if matches.count >= 500 { break }
-        }
         return matches.sorted {
             if $0.isDirectory != $1.isDirectory { return $0.isDirectory }
             return $0.name.localizedStandardCompare($1.name) == .orderedAscending
         }
+    }
+}
+
+enum GoogleDriveIndexRefresh {
+    static func force() async {
+        await Task.detached(priority: .utility) {
+            let manager = FileManager.default
+            let cloudStorage = manager.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/CloudStorage", isDirectory: true)
+            let roots = (try? manager.contentsOfDirectory(
+                at: cloudStorage,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            ))?.filter { $0.lastPathComponent.lowercased().hasPrefix("googledrive-") } ?? []
+            for root in roots {
+                // Ask Metadata Server to revisit File Provider placeholders.
+                let importer = Process()
+                importer.executableURL = URL(fileURLWithPath: "/usr/bin/mdimport")
+                importer.arguments = ["-i", root.path]
+                importer.standardOutput = FileHandle.nullDevice
+                importer.standardError = FileHandle.nullDevice
+                try? importer.run()
+                importer.waitUntilExit()
+
+                // Enumerating the Drive roots prompts File Provider to refresh
+                // directory metadata without downloading file contents.
+                for child in ["My Drive", "Shared drives"] {
+                    let url = root.appendingPathComponent(child, isDirectory: true)
+                    _ = try? manager.contentsOfDirectory(at: url, includingPropertiesForKeys: [.nameKey], options: [.skipsHiddenFiles])
+                }
+            }
+        }.value
     }
 }
 
@@ -389,7 +373,7 @@ enum GoogleDriveCatalogSearch {
         ) else { return [] }
 
         let escaped = term.replacingOccurrences(of: "'", with: "''")
-        let query = "SELECT i.id, replace(replace(i.local_title, char(9), ' '), char(10), ' '), i.mime_type, i.is_folder, COALESCE((SELECT replace(replace(p.local_title, char(9), ' '), char(10), ' ') FROM stable_parents sp JOIN items p ON p.stable_id=sp.parent_stable_id WHERE sp.item_stable_id=i.stable_id LIMIT 1), 'Google Drive') FROM items i WHERE i.trashed=0 AND i.is_tombstone=0 AND i.local_title IS NOT NULL AND lower(i.local_title) LIKE lower('%\(escaped)%') LIMIT 400;"
+        let query = "WITH RECURSIVE matched AS (SELECT stable_id,id,local_title,mime_type,is_folder FROM items WHERE trashed=0 AND is_tombstone=0 AND local_title IS NOT NULL AND lower(local_title) LIKE lower('%\(escaped)%') LIMIT 2000), ancestors(origin,current_id,path,depth) AS (SELECT stable_id,stable_id,'',0 FROM matched UNION ALL SELECT a.origin,sp.parent_stable_id,CASE WHEN p.local_title IS NULL OR p.local_title='' THEN a.path ELSE replace(replace(p.local_title,char(9),' '),char(10),' ') || CASE WHEN a.path='' THEN '' ELSE '/' || a.path END END,a.depth+1 FROM ancestors a JOIN stable_parents sp ON sp.item_stable_id=a.current_id JOIN items p ON p.stable_id=sp.parent_stable_id WHERE a.depth<20), deepest AS (SELECT a.origin,a.path FROM ancestors a WHERE a.depth=(SELECT MAX(b.depth) FROM ancestors b WHERE b.origin=a.origin)) SELECT m.id,replace(replace(m.local_title,char(9),' '),char(10),' '),m.mime_type,m.is_folder,COALESCE(NULLIF(d.path,''),'My Drive') FROM matched m LEFT JOIN deepest d ON d.origin=m.stable_id;"
         var seen = Set<String>()
         var results: [WebSearchResult] = []
         for account in accountFolders {
@@ -416,7 +400,7 @@ enum GoogleDriveCatalogSearch {
                         id: "google-drive|\(fields[0])",
                         engineID: isFolder ? "google_drive_folder" : "google_drive_file",
                         title: fields[1],
-                        subtitle: "Google Drive · \(fields[4])",
+                        subtitle: "Google Drive/\(fields[4])/\(fields[1])",
                         url: url, thumbnailURL: thumbnail, isFallback: false
                     ))
                 }
@@ -462,7 +446,7 @@ enum PersistentSpotlightIndex {
             do {
                 try sqlite.run()
                 let writer = sqliteInput.fileHandleForWriting
-                writer.write(Data("PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF; CREATE TABLE entries(path TEXT PRIMARY KEY, name TEXT NOT NULL COLLATE NOCASE); CREATE INDEX entries_name ON entries(name); BEGIN;\n".utf8))
+                writer.write(Data("PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF; CREATE TABLE entries(path TEXT PRIMARY KEY, name TEXT NOT NULL COLLATE NOCASE); CREATE VIRTUAL TABLE entries_fts USING fts5(name, path UNINDEXED, tokenize='unicode61'); BEGIN;\n".utf8))
                 try spotlight.run()
                 let data = spotlightOutput.fileHandleForReading.readDataToEndOfFile()
                 spotlight.waitUntilExit()
@@ -473,6 +457,7 @@ enum PersistentSpotlightIndex {
                     let escapedPath = path.replacingOccurrences(of: "'", with: "''")
                     let escapedName = name.replacingOccurrences(of: "'", with: "''")
                     writer.write(Data("INSERT OR IGNORE INTO entries VALUES('\(escapedPath)','\(escapedName)');\n".utf8))
+                    writer.write(Data("INSERT INTO entries_fts(name,path) VALUES('\(escapedName)','\(escapedPath)');\n".utf8))
                 }
                 writer.write(Data("COMMIT;\n".utf8))
                 try writer.close()
@@ -488,11 +473,13 @@ enum PersistentSpotlightIndex {
         await Task.detached(priority: .userInitiated) {
             let database = indexURL
             guard FileManager.default.fileExists(atPath: database.path) else { return [] }
-            let escaped = term.replacingOccurrences(of: "'", with: "''")
+            let tokens = term.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+            guard !tokens.isEmpty else { return [] }
+            let match = tokens.map { "\"\($0.replacingOccurrences(of: "\"", with: "\"\""))\"*" }.joined(separator: " AND ")
             let process = Process()
             let output = Pipe()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
-            process.arguments = ["-readonly", database.path, "SELECT path FROM entries WHERE name LIKE '%\(escaped)%' COLLATE NOCASE ORDER BY CASE WHEN name LIKE '\(escaped)%' COLLATE NOCASE THEN 0 ELSE 1 END, name LIMIT 300;"]
+            process.arguments = ["-readonly", database.path, "SELECT path FROM entries_fts WHERE entries_fts MATCH '\(match)' ORDER BY rank LIMIT 300;"]
             process.standardOutput = output
             process.standardError = FileHandle.nullDevice
             do {
@@ -505,6 +492,58 @@ enum PersistentSpotlightIndex {
                 }
             } catch { return [] }
         }.value
+    }
+}
+
+enum SearchLearningStore {
+    private static var databaseURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/AiFly", isDirectory: true)
+            .appendingPathComponent("search-learning.sqlite")
+    }
+
+    static func record(query: String, targetKey: String, kind: String) async {
+        await Task.detached(priority: .utility) {
+            let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !normalized.isEmpty else { return }
+            let manager = FileManager.default
+            try? manager.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let escapedQuery = normalized.replacingOccurrences(of: "'", with: "''")
+            let escapedTarget = targetKey.replacingOccurrences(of: "'", with: "''")
+            let escapedKind = kind.replacingOccurrences(of: "'", with: "''")
+            run("CREATE TABLE IF NOT EXISTS choices(query TEXT NOT NULL,target_key TEXT NOT NULL,kind TEXT NOT NULL,use_count INTEGER NOT NULL DEFAULT 1,last_used REAL NOT NULL,PRIMARY KEY(query,target_key)); INSERT INTO choices(query,target_key,kind,use_count,last_used) VALUES('\(escapedQuery)','\(escapedTarget)','\(escapedKind)',1,strftime('%s','now')) ON CONFLICT(query,target_key) DO UPDATE SET use_count=use_count+1,last_used=strftime('%s','now'),kind=excluded.kind;")
+        }.value
+    }
+
+    static func bonuses(for query: String) async -> [String: Int] {
+        await Task.detached(priority: .userInitiated) {
+            let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !normalized.isEmpty, FileManager.default.fileExists(atPath: databaseURL.path) else { return [:] }
+            let escaped = normalized.replacingOccurrences(of: "'", with: "''")
+            let output = run("SELECT target_key,MIN(180,use_count*35 + CASE WHEN last_used > strftime('%s','now')-604800 THEN 35 ELSE 0 END) FROM choices WHERE query='\(escaped)' ORDER BY use_count DESC,last_used DESC LIMIT 50;", capture: true)
+            var values: [String: Int] = [:]
+            for line in output.split(separator: "\n") {
+                let fields = line.split(separator: "|", maxSplits: 1).map(String.init)
+                if fields.count == 2, let score = Int(fields[1]) { values[fields[0]] = score }
+            }
+            return values
+        }.value
+    }
+
+    @discardableResult
+    private static func run(_ sql: String, capture: Bool = false) -> String {
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        process.arguments = [databaseURL.path, sql]
+        process.standardOutput = capture ? output : FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            let data = capture ? output.fileHandleForReading.readDataToEndOfFile() : Data()
+            process.waitUntilExit()
+            return String(decoding: data, as: UTF8.self)
+        } catch { return "" }
     }
 }
 
@@ -565,12 +604,10 @@ enum SpotlightSearch {
 
     static func find(_ term: String, inside folder: URL? = nil) async -> [FileResult] {
         if let folder { return await FolderSearch.find(term, inside: folder) }
-        async let commandLookup = SpotlightCommandFallback.find(term)
-        async let savedLookup = PersistentSpotlightIndex.find(term)
-        let (commandResults, savedResults) = await (commandLookup, savedLookup)
-        var seen = Set<String>()
-        let combined = (commandResults + savedResults).filter { seen.insert($0.url.standardizedFileURL.path).inserted }
-        if !combined.isEmpty { return combined }
+        let savedResults = await PersistentSpotlightIndex.find(term)
+        if !savedResults.isEmpty { return savedResults }
+        let commandResults = await SpotlightCommandFallback.find(term)
+        if !commandResults.isEmpty { return commandResults }
         let nativeResults: [FileResult] = await withCheckedContinuation { continuation in
             let id = UUID()
             let session = SpotlightQuerySession(term: term) { results in
