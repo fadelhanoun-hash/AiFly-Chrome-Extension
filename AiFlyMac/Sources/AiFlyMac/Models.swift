@@ -308,6 +308,7 @@ final class AppModel: ObservableObject {
     @Published var imageResults: [WebSearchResult] = []
     @Published var selectedImageResult: WebSearchResult?
     @Published var imageSearchURL: URL?
+    @Published var imageSearchFailed = false
     @Published var querySuggestion: String?
     @Published var learnedTargetBonuses: [String: Int] = [:]
     var settings = AppSettings()
@@ -423,6 +424,7 @@ final class AppModel: ObservableObject {
                 imageResults = []
                 selectedImageResult = nil
                 imageSearchURL = nil
+                imageSearchFailed = false
                 querySuggestion = nil
             }
             return
@@ -882,16 +884,35 @@ final class AppModel: ObservableObject {
         isSearchingWeb = true
         imageResults = []
         selectedImageResult = nil
+        imageSearchFailed = false
         if let escaped = term.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
-            imageSearchURL = URL(string: "https://www.google.com/search?tbm=isch&igu=1&q=\(escaped)")
+            imageSearchURL = URL(string: "https://www.google.com/search?udm=2&safe=active&hl=en&q=\(escaped)")
         }
         webSearchTask?.cancel()
-        webSearchTask = Task {
-            let matches = await WebSearchService.googleImages(term)
-            guard !Task.isCancelled, mode == .images else { return }
-            imageResults = matches
-            isSearchingWeb = false
+    }
+
+    func acceptGoogleImageURLs(_ urls: [URL], sourceURL: URL) {
+        guard mode == .images, imageSearchURL == sourceURL else { return }
+        var seen = Set<String>()
+        imageResults = urls.filter { seen.insert($0.absoluteString).inserted }.prefix(40).enumerated().map { index, imageURL in
+            WebSearchResult(
+                id: "google-image|\(index)|\(imageURL.absoluteString)",
+                engineID: "images",
+                title: query.trimmingCharacters(in: .whitespacesAndNewlines),
+                subtitle: "Google Images",
+                url: sourceURL,
+                thumbnailURL: imageURL,
+                isFallback: false
+            )
         }
+        isSearchingWeb = false
+        imageSearchFailed = imageResults.isEmpty
+    }
+
+    func markGoogleImageSearchFailed(sourceURL: URL) {
+        guard mode == .images, imageSearchURL == sourceURL, imageResults.isEmpty else { return }
+        isSearchingWeb = false
+        imageSearchFailed = true
     }
 
     func acceptQuerySuggestion() {

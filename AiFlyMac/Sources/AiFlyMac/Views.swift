@@ -517,16 +517,42 @@ struct LauncherView: View {
 
     private var imageSearch: some View {
         ZStack {
-            if model.isSearchingWeb && model.imageSearchURL == nil {
+            if model.imageSearchFailed, let url = model.imageSearchURL {
+                VStack(spacing: 14) {
+                    EmptyStateView(
+                        title: "Images could not load",
+                        systemImage: "photo.badge.exclamationmark",
+                        description: "Google did not return a gallery. Try again or open Google Images."
+                    )
+                    HStack {
+                        Button("Try Again") { model.submitImageSearch() }
+                        Button("Open Google Images") { NSWorkspace.shared.open(url) }
+                    }
+                    .buttonStyle(.bordered)
+                }
+            } else if model.imageResults.isEmpty, let url = model.imageSearchURL {
+                VStack(spacing: 12) {
+                    ProgressView()
+                    Text("Finding images…")
+                        .font(.headline)
+                    Text("Loading Google Images for “\(model.query)”")
+                        .font(.subheadline)
+                        .foregroundStyle(model.settings.theme.secondaryText)
+                }
+                GoogleImageGalleryLoader(
+                    url: url,
+                    onResults: { model.acceptGoogleImageURLs($0, sourceURL: url) },
+                    onFailure: { model.markGoogleImageSearchFailed(sourceURL: url) }
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .opacity(0.001)
+                .allowsHitTesting(false)
+            } else if model.isSearchingWeb {
                 EmptyStateView(
                     title: "Finding images…",
                     systemImage: "photo.on.rectangle.angled",
                     description: "Type above and press Return for a gallery."
                 )
-            } else if model.imageResults.isEmpty, let url = model.imageSearchURL {
-                GoogleImageGalleryWebView(url: url)
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .padding(12)
             } else if model.imageResults.isEmpty {
                 EmptyStateView(
                     title: "Search Google Images",
@@ -537,15 +563,8 @@ struct LauncherView: View {
                 ScrollView {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 4), spacing: 10) {
                         ForEach(model.imageResults) { result in
-                            Button { model.selectedImageResult = result } label: {
-                                AsyncImage(url: result.thumbnailURL) { phase in
-                                    if let image = phase.image { image.resizable().scaledToFill() }
-                                    else { Rectangle().fill(model.settings.theme.cardSurface).overlay { ProgressView() } }
-                                }
-                                .frame(height: 128).clipped()
-                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                            }
-                            .buttonStyle(.plain)
+                            ImageGalleryTile(result: result) { model.selectedImageResult = result }
+                                .environmentObject(model)
                         }
                     }
                     .padding(14)
@@ -603,6 +622,66 @@ struct LauncherView: View {
         }
     }
 
+}
+
+private struct ImageGalleryTile: View {
+    @EnvironmentObject private var model: AppModel
+    let result: WebSearchResult
+    let onSelect: () -> Void
+    @State private var hovered = false
+    @State private var loadedImage: NSImage?
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Button(action: onSelect) {
+                AsyncImage(url: result.thumbnailURL) { phase in
+                    if let image = phase.image {
+                        image.resizable().scaledToFill().onAppear { loadNativeImage() }
+                    } else {
+                        Rectangle().fill(model.settings.theme.cardSurface).overlay { ProgressView() }
+                    }
+                }
+                .frame(height: 128).clipped()
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .buttonStyle(.plain)
+
+            if hovered {
+                Button(action: copyImage) {
+                    Label("Copy", systemImage: "doc.on.doc")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 9)
+                        .frame(height: 28)
+                        .background(.ultraThinMaterial)
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .padding(7)
+                .transition(.opacity.combined(with: .scale(scale: 0.92)))
+            }
+        }
+        .onHover { hovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovered)
+    }
+
+    private func loadNativeImage() {
+        guard loadedImage == nil, let url = result.thumbnailURL else { return }
+        Task {
+            guard let (data, _) = try? await URLSession.shared.data(from: url),
+                  let image = NSImage(data: data) else { return }
+            loadedImage = image
+        }
+    }
+
+    private func copyImage() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        if let loadedImage {
+            pasteboard.writeObjects([loadedImage])
+        } else if let url = result.thumbnailURL {
+            pasteboard.setString(url.absoluteString, forType: .string)
+        }
+    }
 }
 
 private struct RecentItemsColumn: View {
@@ -955,29 +1034,83 @@ private struct EmbeddedWebView: NSViewRepresentable {
     }
 }
 
-private struct GoogleImageGalleryWebView: NSViewRepresentable {
+private struct GoogleImageGalleryLoader: NSViewRepresentable {
     let url: URL
+    let onResults: ([URL]) -> Void
+    let onFailure: () -> Void
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeCoordinator() -> Coordinator { Coordinator(onResults: onResults, onFailure: onFailure) }
 
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = context.coordinator
-        view.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Safari/605.1.15"
+        view.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
         view.setValue(false, forKey: "drawsBackground")
         return view
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
         guard webView.url != url else { return }
+        context.coordinator.reset()
         webView.load(URLRequest(url: url))
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate {
+        private let onResults: ([URL]) -> Void
+        private let onFailure: () -> Void
+        private var attempts = 0
+
+        init(onResults: @escaping ([URL]) -> Void, onFailure: @escaping () -> Void) {
+            self.onResults = onResults
+            self.onFailure = onFailure
+        }
+
+        func reset() { attempts = 0 }
+
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            webView.evaluateJavaScript("window.scrollTo(0, 0)")
+            inspect(webView)
+        }
+
+        private func inspect(_ webView: WKWebView) {
+            attempts += 1
+            let script = """
+            (() => {
+              const seen = new Set();
+              window.scrollBy(0, Math.max(500, window.innerHeight));
+              return Array.from(document.images).map((img) => {
+                const link = img.closest('a')?.href || '';
+                let linked = '';
+                try {
+                  const parsed = new URL(link, location.href);
+                  linked = parsed.searchParams.get('imgurl') || parsed.searchParams.get('mediaurl') || '';
+                } catch {}
+                return img.dataset.src || img.dataset.iurl || img.dataset.ou
+                  || img.getAttribute('data-src') || img.getAttribute('data-iurl')
+                  || img.getAttribute('data-ou') || linked || img.currentSrc || img.src || '';
+              }).filter((value) => {
+                if (!/^https:\\/\\//i.test(value) || seen.has(value)) return false;
+                if (/google\\.[^/]+\\/(?:images\\/branding|logos)|gstatic\\.com\\/images\\/branding/i.test(value)) return false;
+                seen.add(value);
+                return true;
+              }).slice(0, 40);
+            })()
+            """
+            webView.evaluateJavaScript(script) { [weak self, weak webView] value, _ in
+                guard let self else { return }
+                let urls = (value as? [String] ?? []).compactMap(URL.init(string:))
+                if urls.count >= 4 {
+                    self.onResults(urls)
+                } else if self.attempts < 16, let webView {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self, weak webView] in
+                        guard let self, let webView else { return }
+                        self.inspect(webView)
+                    }
+                } else {
+                    self.onFailure()
+                }
+            }
         }
     }
 }
