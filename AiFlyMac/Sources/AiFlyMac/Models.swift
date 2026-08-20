@@ -114,6 +114,8 @@ struct FileResult: Identifiable, Hashable {
     var isDirectory: Bool {
         (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
     }
+    var isApplication: Bool { url.pathExtension.lowercased() == "app" }
+    var isNavigableFolder: Bool { isDirectory && !isApplication }
     var isGoogleDriveItem: Bool {
         let path = url.path.lowercased()
         return path.contains("/library/cloudstorage/googledrive-") || path.contains("/google drive/")
@@ -1254,7 +1256,7 @@ final class AppModel: ObservableObject {
             return
         } else if selectedContact != nil {
             showContactDetails()
-        } else if let selectedFile, selectedFile.isDirectory {
+        } else if let selectedFile, selectedFile.isNavigableFolder {
             enterFolder(selectedFile.url)
         } else {
             showActions()
@@ -1277,7 +1279,9 @@ final class AppModel: ObservableObject {
             else { activateSelection() }
         } else if selectedContact != nil {
             showContactDetails()
-        } else if let selectedFile, selectedFile.isDirectory {
+        } else if let selectedFile, selectedFile.isApplication {
+            activateSelection()
+        } else if let selectedFile, selectedFile.isNavigableFolder {
             enterFolder(selectedFile.url)
         } else if showFileActions, FileAction.allCases.indices.contains(actionSelection) {
             perform(FileAction.allCases[actionSelection])

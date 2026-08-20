@@ -259,14 +259,14 @@ struct LauncherView: View {
                                         .contentShape(Rectangle())
                                         .onTapGesture(count: 2) {
                                             model.selectSearchResult(at: index)
-                                            item.isDirectory ? model.enterFolder(item.url) : model.activateSelection()
+                                            item.isNavigableFolder ? model.enterFolder(item.url) : model.activateSelection()
                                         }
                                         .onTapGesture {
                                             model.selectSearchResult(at: index); model.hideActions(); model.hideContactDetails()
-                                            if item.isDirectory { model.enterFolder(item.url) }
+                                            if item.isNavigableFolder { model.enterFolder(item.url) }
                                         }
                                         .contextMenu {
-                                            if item.isDirectory {
+                                            if item.isNavigableFolder {
                                                 Button("Open Folder Here") {
                                                     model.selection = index
                                                     model.enterFolder(item.url)
