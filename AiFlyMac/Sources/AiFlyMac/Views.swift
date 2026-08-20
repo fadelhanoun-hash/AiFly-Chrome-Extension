@@ -410,12 +410,13 @@ struct LauncherView: View {
                 }
                 .foregroundStyle(Color(red: 0.10, green: 0.13, blue: 0.18))
                 .frame(width: 420)
-                .frame(maxHeight: .infinity)
+                .frame(maxHeight: 440, alignment: .top)
                 .background(Color.white)
                 .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                 .overlay { RoundedRectangle(cornerRadius: 22).stroke(Color.black.opacity(0.10)) }
                 .shadow(color: .black.opacity(0.22), radius: 24, x: -8)
-                .padding(10)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 18)
                 .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
@@ -539,22 +540,13 @@ struct LauncherView: View {
                     .buttonStyle(.bordered)
                 }
             } else if model.imageResults.isEmpty, let url = model.imageSearchURL {
-                VStack(spacing: 12) {
-                    ProgressView()
-                    Text("Finding images…")
-                        .font(.headline)
-                    Text("Loading Google Images for “\(model.query)”")
-                        .font(.subheadline)
-                        .foregroundStyle(model.settings.theme.secondaryText)
-                }
                 GoogleImageGalleryLoader(
                     url: url,
-                    onResults: { model.acceptGoogleImageURLs($0, sourceURL: url) },
-                    onFailure: { model.markGoogleImageSearchFailed(sourceURL: url) }
+                    onResults: { _ in },
+                    onFailure: {}
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .opacity(0.001)
-                .allowsHitTesting(false)
+                .padding(12)
             } else if model.isSearchingWeb {
                 EmptyStateView(
                     title: "Finding images…",
@@ -1054,6 +1046,51 @@ private struct GoogleImageGalleryLoader: NSViewRepresentable {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+        let thumbnailGridScript = """
+        (() => {
+          const install = () => {
+            window.scrollBy(0, Math.max(700, window.innerHeight));
+            const sources = Array.from(document.images)
+              .filter(img => img.naturalWidth >= 80 && img.naturalHeight >= 60)
+              .map(img => img.currentSrc || img.src)
+              .filter(src => typeof src === 'string' && (src.startsWith('https://') || src.startsWith('data:image/')));
+            if (sources.length < 2) return;
+            let grid = document.getElementById('aifly-image-grid');
+            if (!grid) {
+              grid = document.createElement('main');
+              grid.id = 'aifly-image-grid';
+              document.documentElement.appendChild(grid);
+            }
+            const unique = Array.from(new Set(sources)).slice(0, 80);
+            if (grid.dataset.count === String(unique.length)) return;
+            grid.dataset.count = String(unique.length);
+            grid.replaceChildren(...unique.map(src => {
+              const image = document.createElement('img');
+              image.src = src;
+              image.loading = 'eager';
+              return image;
+            }));
+          };
+          const style = document.createElement('style');
+          style.textContent = [
+            'html, body { margin: 0 !important; min-height: 100% !important; background: transparent !important; }',
+            'body > * { visibility: hidden !important; }',
+            '#aifly-image-grid { visibility: visible !important; position: fixed !important; inset: 0 !important;',
+            'z-index: 2147483647 !important; overflow-y: auto !important; padding: 10px !important;',
+            'box-sizing: border-box !important; display: grid !important;',
+            'grid-template-columns: repeat(4, minmax(0, 1fr)) !important;',
+            'grid-auto-rows: 150px !important; gap: 10px !important; background: transparent !important; }',
+            '#aifly-image-grid img { visibility: visible !important; width: 100% !important; height: 100% !important;',
+            'object-fit: cover !important; border-radius: 12px !important; }'
+          ].join(' ');
+          document.documentElement.appendChild(style);
+          install();
+          window.setInterval(install, 600);
+        })();
+        """
+        configuration.userContentController.addUserScript(
+            WKUserScript(source: thumbnailGridScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
+        )
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = context.coordinator
         view.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"

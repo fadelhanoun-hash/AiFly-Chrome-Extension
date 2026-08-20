@@ -5,9 +5,9 @@ import Contacts
 enum LauncherMode: String, CaseIterable, Identifiable {
     case files = "Search Mac"
     case ask = "Ask AI"
-    case notes = "Notes"
     case google = "Google"
     case images = "Images"
+    case notes = "Notes"
     var id: String { rawValue }
 }
 
