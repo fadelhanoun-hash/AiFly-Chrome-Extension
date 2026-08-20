@@ -35,12 +35,6 @@ struct LauncherView: View {
                             .onSubmit { submit() }
                     }
                     if model.isWorking || model.isSearchingFiles || model.isSearchingWeb { ProgressView().controlSize(.small) }
-                    Picker("Mode", selection: $model.mode) {
-                        ForEach(LauncherMode.allCases) { Text($0.rawValue).tag($0) }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-                    .frame(width: 470)
                     Button { showingQuickMenu.toggle() } label: {
                         Image(systemName: "ellipsis").font(.system(size: 16, weight: .semibold))
                     }
@@ -52,7 +46,20 @@ struct LauncherView: View {
                     }
                 }
                 .padding(.horizontal, 28)
-                .frame(height: 82)
+                .frame(height: 64)
+
+                HStack {
+                    Spacer(minLength: 20)
+                    Picker("Mode", selection: $model.mode) {
+                        ForEach(LauncherMode.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .frame(width: 470)
+                    Spacer(minLength: 20)
+                }
+                .frame(height: 38)
+                .padding(.bottom, 4)
 
                 if model.mode == .files && !model.availableFormatFilters.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -263,7 +270,8 @@ struct LauncherView: View {
                                         }
                                         .onTapGesture {
                                             model.selectSearchResult(at: index); model.hideActions(); model.hideContactDetails()
-                                            if item.isNavigableFolder { model.enterFolder(item.url) }
+                                            if item.isApplication { model.activateSelection() }
+                                            else if item.isNavigableFolder { model.enterFolder(item.url) }
                                         }
                                         .contextMenu {
                                             if item.isNavigableFolder {
@@ -1021,7 +1029,8 @@ private struct EmbeddedWebView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .default()
+        configuration.websiteDataStore = .nonPersistent()
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
         configuration.mediaTypesRequiringUserActionForPlayback = [.audio, .video]
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.setValue(false, forKey: "drawsBackground")
@@ -1043,7 +1052,8 @@ private struct GoogleImageGalleryLoader: NSViewRepresentable {
 
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .default()
+        configuration.websiteDataStore = .nonPersistent()
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = context.coordinator
         view.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
@@ -1078,20 +1088,34 @@ private struct GoogleImageGalleryLoader: NSViewRepresentable {
             let script = """
             (() => {
               const seen = new Set();
+              const candidates = [];
+              const add = (raw) => {
+                if (typeof raw !== 'string') return;
+                const value = raw.replace(/&amp;/g, '&').replace(/\\\\u003d/g, '=')
+                  .replace(/\\\\u0026/g, '&').replace(/\\\\u002f/g, '/').replace(/\\\\\\\\\\//g, '/');
+                if (value.startsWith('https://')) candidates.push(value);
+              };
               window.scrollBy(0, Math.max(500, window.innerHeight));
-              return Array.from(document.images).map((img) => {
+              Array.from(document.images).forEach((img) => {
                 const link = img.closest('a')?.href || '';
-                let linked = '';
                 try {
                   const parsed = new URL(link, location.href);
-                  linked = parsed.searchParams.get('imgurl') || parsed.searchParams.get('mediaurl') || '';
+                  add(parsed.searchParams.get('imgurl') || parsed.searchParams.get('mediaurl') || '');
                 } catch {}
-                return img.dataset.src || img.dataset.iurl || img.dataset.ou
-                  || img.getAttribute('data-src') || img.getAttribute('data-iurl')
-                  || img.getAttribute('data-ou') || linked || img.currentSrc || img.src || '';
-              }).filter((value) => {
-                if (!/^https:\\/\\//i.test(value) || seen.has(value)) return false;
-                if (/google\\.[^/]+\\/(?:images\\/branding|logos)|gstatic\\.com\\/images\\/branding/i.test(value)) return false;
+                [img.dataset.src, img.dataset.iurl, img.dataset.ou,
+                 img.getAttribute('data-src'), img.getAttribute('data-iurl'),
+                 img.getAttribute('data-ou'), img.currentSrc, img.src].forEach(add);
+              });
+              performance.getEntriesByType('resource').forEach((entry) => add(entry.name));
+              return candidates.filter((value) => {
+                if (seen.has(value)) return false;
+                const lower = value.toLowerCase();
+                if (lower.includes('images/branding') || lower.includes('favicon') || lower.includes('logo')) return false;
+                const isImage = lower.includes('encrypted-tbn') || lower.includes('gstatic')
+                  || lower.includes('googleusercontent') || lower.includes('ggpht')
+                  || lower.includes('.jpg') || lower.includes('.jpeg')
+                  || lower.includes('.png') || lower.includes('.webp');
+                if (!isImage) return false;
                 seen.add(value);
                 return true;
               }).slice(0, 40);

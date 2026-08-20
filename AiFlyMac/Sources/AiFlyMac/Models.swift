@@ -485,7 +485,7 @@ final class AppModel: ObservableObject {
         updateGoogleDriveSearch()
         isSearchingFiles = true
         searchTask = Task {
-            if !term.isEmpty { try? await Task.sleep(for: .milliseconds(140)) }
+            if !term.isEmpty { try? await Task.sleep(for: .milliseconds(25)) }
             guard !Task.isCancelled else { return }
             let lookupTerm = primaryMacLookupTerm(for: term)
             let matches = await SpotlightSearch.find(lookupTerm, inside: searchRoot)
@@ -1010,7 +1010,7 @@ final class AppModel: ObservableObject {
         }
         isSearchingContacts = true
         contactSearchTask = Task {
-            try? await Task.sleep(for: .milliseconds(120))
+            try? await Task.sleep(for: .milliseconds(220))
             guard !Task.isCancelled else { return }
             do {
                 let matches = try await ContactsSearch.find(primaryMacLookupTerm(for: term))
@@ -1035,7 +1035,7 @@ final class AppModel: ObservableObject {
             return
         }
         applicationSearchTask = Task {
-            try? await Task.sleep(for: .milliseconds(90))
+            try? await Task.sleep(for: .milliseconds(20))
             guard !Task.isCancelled else { return }
             let matches = await InstalledApplicationSearch.find(primaryMacLookupTerm(for: term))
             guard !Task.isCancelled, query.trimmingCharacters(in: .whitespacesAndNewlines) == term else { return }
@@ -1053,6 +1053,7 @@ final class AppModel: ObservableObject {
             return
         }
         folderSearchTask = Task {
+            try? await Task.sleep(for: .milliseconds(35))
             guard !Task.isCancelled else { return }
             let matches = await FolderNameSearch.find(primaryMacLookupTerm(for: term))
             guard !Task.isCancelled, query.trimmingCharacters(in: .whitespacesAndNewlines) == term else { return }
@@ -1073,7 +1074,7 @@ final class AppModel: ObservableObject {
         }
         isIndexingGoogleDrive = true
         googleDriveSearchTask = Task {
-            try? await Task.sleep(for: .milliseconds(120))
+            try? await Task.sleep(for: .milliseconds(260))
             guard !Task.isCancelled else { isIndexingGoogleDrive = false; return }
             let lookupTerm = primaryMacLookupTerm(for: term)
             async let directMatches = GoogleDriveDirectSearch.find(lookupTerm)
