@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import WebKit
 import ServiceManagement
 
 @main
@@ -75,6 +76,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 && self.model.hasActivatedResultPreview
                 && ((event.keyCode == 124 && selectedFolderCanOpen)
                     || (event.keyCode == 123 && self.model.searchRoot != nil))
+            if self.model.mode == .browser {
+                switch event.keyCode {
+                case 126: self.model.moveBrowserSelection(-1)
+                case 125: self.model.moveBrowserSelection(1)
+                case 124: self.model.browserMoveRight()
+                case 123: self.model.browserMoveLeft()
+                case 36, 76: self.model.activateBrowserSelection()
+                default: return event
+                }
+                return nil
+            }
             if editingSearchField, isHorizontalArrow, modifiers.intersection([.command, .option, .shift]).isEmpty,
                let editor = launcher.firstResponder as? NSTextView {
                 let selection = editor.selectedRange()
@@ -98,6 +110,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return nil
             }
             if self.model.mode == .notes {
+                if self.isInsideWebEditor(launcher.firstResponder) { return event }
                 switch event.keyCode {
                 case 126: self.model.moveNoteSelection(-1)
                 case 125: self.model.moveNoteSelection(1)
@@ -155,6 +168,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         NotificationCenter.default.addObserver(forName: .openSettings, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.showSettings() }
+        }
+    }
+
+    private func isInsideWebEditor(_ responder: NSResponder?) -> Bool {
+        guard var view = responder as? NSView else { return false }
+        while true {
+            if view is WKWebView || String(describing: type(of: view)).hasPrefix("WK") { return true }
+            guard let parent = view.superview else { return false }
+            view = parent
         }
     }
 
@@ -242,9 +264,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if settingsWindow == nil {
             let settingsView = SettingsView()
                 .environmentObject(model)
-                .frame(width: 620, height: 700)
+                .frame(width: 900, height: 700)
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 620, height: 700),
+                contentRect: NSRect(x: 0, y: 0, width: 900, height: 700),
                 styleMask: [.titled, .closable],
                 backing: .buffered,
                 defer: false

@@ -4,6 +4,7 @@ import Contacts
 
 enum LauncherMode: String, CaseIterable, Identifiable {
     case files = "Search Mac"
+    case browser = "Browser"
     case ask = "Ask AI"
     case google = "Google"
     case images = "Images"
@@ -65,15 +66,36 @@ struct WebSearchResult: Identifiable, Hashable {
     let isFallback: Bool
 }
 
+struct SystemSearchResult: Identifiable, Hashable {
+    let id: String
+    let title: String
+    let subtitle: String
+    let contentType: String
+    let url: URL?
+
+    var category: String {
+        let type = contentType.lowercased()
+        if type.contains("message") || type.contains("email") { return "Message" }
+        if type.contains("contact") { return "Contact" }
+        if type.contains("calendar") || type.contains("event") { return "Event" }
+        if type.contains("reminder") { return "Reminder" }
+        if type.contains("bookmark") || type.contains("url") { return "Bookmark" }
+        if type.contains("preference") || type.contains("settings") { return "System Setting" }
+        return "Spotlight"
+    }
+}
+
 enum MacSearchResult: Identifiable, Hashable {
     case file(FileResult)
     case contact(ContactResult)
+    case system(SystemSearchResult)
     case web(WebSearchResult)
 
     var id: String {
         switch self {
         case .file(let file): return "file|\(file.id)"
         case .contact(let contact): return "contact|\(contact.id)"
+        case .system(let result): return "system|\(result.id)"
         case .web(let result): return "web|\(result.id)"
         }
     }
@@ -107,18 +129,40 @@ enum FileScopeKind: String, CaseIterable, Identifiable {
 
 struct FileResult: Identifiable, Hashable {
     let url: URL
+    var directoryHint: Bool? = nil
+    var remoteURL: URL? = nil
+
+    init(url: URL) {
+        self.url = url
+    }
+
+    init(url: URL, directoryHint: Bool?, remoteURL: URL?) {
+        self.url = url
+        self.directoryHint = directoryHint
+        self.remoteURL = remoteURL
+    }
+
     var id: String { url.path }
     var name: String { url.lastPathComponent }
     var folder: String { url.deletingLastPathComponent().path }
-    var icon: NSImage { NSWorkspace.shared.icon(forFile: url.path) }
+    var icon: NSImage {
+        if directoryHint == true, !FileManager.default.fileExists(atPath: url.path) {
+            return NSImage(named: NSImage.folderName) ?? NSWorkspace.shared.icon(forFile: url.path)
+        }
+        return NSWorkspace.shared.icon(forFile: url.path)
+    }
     var isDirectory: Bool {
-        (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+        directoryHint ?? ((try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false)
     }
     var isApplication: Bool { url.pathExtension.lowercased() == "app" }
     var isNavigableFolder: Bool { isDirectory && !isApplication }
     var isGoogleDriveItem: Bool {
         let path = url.path.lowercased()
         return path.contains("/library/cloudstorage/googledrive-") || path.contains("/google drive/")
+    }
+    var isMediaFile: Bool {
+        guard !isDirectory else { return false }
+        return scopeKind == .images || scopeKind == .video || scopeKind == .audio
     }
     var formatLabel: String {
         if isDirectory { return "Folder" }
@@ -134,6 +178,36 @@ struct FileResult: Identifiable, Hashable {
         if ["mp3", "m4a", "wav", "aac", "flac", "aiff"].contains(ext) { return .audio }
         if ["zip", "rar", "7z", "tar", "gz", "dmg", "pkg"].contains(ext) { return .archives }
         return .other
+    }
+}
+
+struct BrowserColumn: Identifiable {
+    let folder: URL
+    var items: [FileResult]
+    var selection: Int
+    var id: String { folder.standardizedFileURL.path }
+}
+
+struct BrowserLocation: Identifiable {
+    let name: String
+    let url: URL
+    var id: String { url.standardizedFileURL.path }
+    var icon: NSImage { NSWorkspace.shared.icon(forFile: url.path) }
+
+    static var available: [BrowserLocation] {
+        let manager = FileManager.default
+        let home = manager.homeDirectoryForCurrentUser
+        var urls = [home]
+        urls += manager.mountedVolumeURLs(includingResourceValuesForKeys: [.volumeNameKey, .volumeIsLocalKey], options: [.skipHiddenVolumes]) ?? []
+        let cloudStorage = home.appendingPathComponent("Library/CloudStorage", isDirectory: true)
+        urls += (try? manager.contentsOfDirectory(at: cloudStorage, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])) ?? []
+        var seen = Set<String>()
+        return urls.filter { seen.insert($0.standardizedFileURL.path).inserted }.map { url in
+            let values = try? url.resourceValues(forKeys: [.volumeNameKey])
+            let isCloudProvider = url.path.contains("/Library/CloudStorage/")
+            let name = url == home ? "Home" : (isCloudProvider ? url.lastPathComponent : (values?.volumeName ?? url.lastPathComponent))
+            return BrowserLocation(name: name.isEmpty ? url.path : name, url: url)
+        }
     }
 }
 
@@ -223,6 +297,14 @@ struct AppSettings {
         get { KeychainStore.read("gemini-key") ?? "" }
         set { KeychainStore.write(newValue, account: "gemini-key") }
     }
+    var googleSearchAPIKey: String {
+        get { KeychainStore.read("google-search-api-key") ?? "" }
+        set { KeychainStore.write(newValue, account: "google-search-api-key") }
+    }
+    var googleSearchEngineID: String {
+        get { UserDefaults.standard.string(forKey: "googleSearchEngineID") ?? "" }
+        set { UserDefaults.standard.set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "googleSearchEngineID") }
+    }
     var includedExtensions: [String] {
         get { UserDefaults.standard.stringArray(forKey: "includedExtensions") ?? [] }
         set { UserDefaults.standard.set(newValue, forKey: "includedExtensions") }
@@ -242,6 +324,10 @@ struct AppSettings {
     var excludedFolders: [String] {
         get { UserDefaults.standard.stringArray(forKey: "excludedFolders") ?? [] }
         set { UserDefaults.standard.set(newValue, forKey: "excludedFolders") }
+    }
+    var starredFolders: [String] {
+        get { UserDefaults.standard.stringArray(forKey: "starredBrowserFolders") ?? [] }
+        set { UserDefaults.standard.set(Array(NSOrderedSet(array: newValue)) as? [String] ?? newValue, forKey: "starredBrowserFolders") }
     }
     var launchAtLogin: Bool {
         get {
@@ -277,12 +363,15 @@ final class AppModel: ObservableObject {
     @Published var recentSelection = -1
     @Published var isLoadingRecents = false
     @Published var contactResults: [ContactResult] = []
+    @Published var systemResults: [SystemSearchResult] = []
+    @Published var browserColumns: [BrowserColumn] = []
+    @Published var browserActiveColumn = -1
+    @Published var browserFavoriteSelection = 0
     @Published var applicationResults: [FileResult] = []
     @Published var folderResults: [FileResult] = []
     @Published var googleDriveResults: [FileResult] = []
     @Published var googleDriveCatalogResults: [WebSearchResult] = []
     @Published var isIndexingGoogleDrive = false
-    @Published var isRefreshingPersistentIndex = false
     @Published var webResults: [WebSearchResult] = []
     @Published var activeWebEngine: WebSearchEngine?
     @Published var isSearchingWeb = false
@@ -351,7 +440,6 @@ final class AppModel: ObservableObject {
             lastSavedNoteID = UUID(uuidString: value)
         }
         searchHistory = UserDefaults.standard.stringArray(forKey: searchHistoryKey) ?? []
-        startPersistentIndexUpdates()
         startGoogleDriveRefreshes()
     }
 
@@ -371,32 +459,37 @@ final class AppModel: ObservableObject {
         notePickerMessageID = nil
     }
 
-    private func startPersistentIndexUpdates() {
-        Task { [weak self] in
-            while !Task.isCancelled {
-                self?.isRefreshingPersistentIndex = true
-                await PersistentSpotlightIndex.refreshIfNeeded()
-                self?.isRefreshingPersistentIndex = false
-                try? await Task.sleep(for: .seconds(60))
-            }
-        }
-    }
-
     private func startGoogleDriveRefreshes() {
         Task { [weak self] in
+            self?.isIndexingGoogleDrive = true
+            await GoogleDriveIndexRefresh.force()
+            UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "AiFly.lastGoogleDriveRefresh")
+            self?.isIndexingGoogleDrive = false
+            self?.refreshCloudBrowserColumns()
+            if !(self?.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) {
+                self?.updateGoogleDriveSearch()
+            }
+
+            var signature = GoogleDriveIndexRefresh.catalogSignature()
             while !Task.isCancelled {
-                let refreshKey = "AiFly.lastGoogleDriveRefresh"
-                let lastRefresh = UserDefaults.standard.double(forKey: refreshKey)
-                let elapsed = Date().timeIntervalSince1970 - lastRefresh
-                if lastRefresh > 0, elapsed < 86_400 {
-                    try? await Task.sleep(for: .seconds(max(60, 86_400 - elapsed)))
-                    continue
+                try? await Task.sleep(for: .seconds(60))
+                var newSignature = GoogleDriveIndexRefresh.catalogSignature()
+                let elapsed = Date().timeIntervalSince1970 - UserDefaults.standard.double(forKey: "AiFly.lastGoogleDriveRefresh")
+                var performedMaintenance = false
+                if elapsed >= 21_600 {
+                    self?.isIndexingGoogleDrive = true
+                    await GoogleDriveIndexRefresh.force()
+                    UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "AiFly.lastGoogleDriveRefresh")
+                    self?.isIndexingGoogleDrive = false
+                    newSignature = GoogleDriveIndexRefresh.catalogSignature()
+                    performedMaintenance = true
                 }
-                self?.isIndexingGoogleDrive = true
-                await GoogleDriveIndexRefresh.force()
-                UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: refreshKey)
-                self?.isIndexingGoogleDrive = false
-                try? await Task.sleep(for: .seconds(86_400))
+                guard performedMaintenance || newSignature != signature else { continue }
+                signature = newSignature
+                self?.refreshCloudBrowserColumns()
+                if !(self?.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) {
+                    self?.updateGoogleDriveSearch()
+                }
             }
         }
     }
@@ -416,6 +509,10 @@ final class AppModel: ObservableObject {
         if mode == .notes {
             querySuggestion = nil
             noteListSelection = min(noteListSelection, max(0, launcherNotes.count - 1))
+            return
+        }
+        if mode == .browser {
+            refreshBrowserColumn()
             return
         }
         if mode == .google || mode == .images {
@@ -452,6 +549,7 @@ final class AppModel: ObservableObject {
             googleDriveSearchTask?.cancel()
             results = []
             contactResults = []
+            systemResults = []
             applicationResults = []
             folderResults = []
             googleDriveResults = []
@@ -474,6 +572,7 @@ final class AppModel: ObservableObject {
             googleDriveCatalogResults = []
             isIndexingGoogleDrive = false
             contactResults = []
+            systemResults = []
             selection = 0
             showFileActions = false
             isSearchingFiles = false
@@ -488,12 +587,25 @@ final class AppModel: ObservableObject {
             if !term.isEmpty { try? await Task.sleep(for: .milliseconds(25)) }
             guard !Task.isCancelled else { return }
             let lookupTerm = primaryMacLookupTerm(for: term)
-            let matches = await SpotlightSearch.find(lookupTerm, inside: searchRoot)
+            if searchRoot == nil {
+                let cached = await SearchLearningStore.cachedSpotlightResults(for: lookupTerm)
+                guard !Task.isCancelled, searchGeneration == generation else { return }
+                if !cached.isEmpty {
+                    results = applySearchRules(to: cached.filter { matchesNaturalMacQuery($0, query: term) })
+                    isSearchingFiles = false
+                }
+            }
+            async let fileMatches = SpotlightSearch.find(lookupTerm, inside: searchRoot)
+            async let semanticMatches = searchRoot == nil ? CoreSpotlightSearch.find(term) : []
+            let matches = await fileMatches
+            let systemMatches = await semanticMatches
             guard !Task.isCancelled, searchGeneration == generation else { return }
+            systemResults = systemMatches
             results = applySearchRules(to: matches.filter { matchesNaturalMacQuery($0, query: term) }).sorted {
                 if $0.isDirectory != $1.isDirectory { return $0.isDirectory }
                 return $0.name.localizedStandardCompare($1.name) == .orderedAscending
             }
+            if searchRoot == nil { Task { await SearchLearningStore.cacheSpotlightResults(matches) } }
             updateMacQuerySuggestion(for: term)
             if let pendingRestoredFilter, availableFormatFilters.contains(pendingRestoredFilter) {
                 selectedFormatFilter = pendingRestoredFilter
@@ -573,6 +685,14 @@ final class AppModel: ObservableObject {
         let files = visibleResults.filter {
             !$0.isDirectory && $0.url.pathExtension.lowercased() != "app" && !applicationPaths.contains($0.url.standardizedFileURL.path)
         }.map(MacSearchResult.file)
+        let localPaths = Set(unfilteredFileResults.map { $0.url.standardizedFileURL.path })
+        let system = searchRoot == nil && selectedFormatFilter == nil
+            ? systemResults.filter { result in
+                if result.category == "Contact" { return false }
+                guard let url = result.url, url.isFileURL else { return true }
+                return !localPaths.contains(url.standardizedFileURL.path)
+            }.map(MacSearchResult.system)
+            : []
         let localNames = Set(unfilteredFileResults.map { $0.name.lowercased() })
         let remoteDrive = googleDriveCatalogResults.filter { result in
             guard !localNames.contains(result.title.lowercased()) else { return false }
@@ -584,7 +704,7 @@ final class AppModel: ObservableObject {
             default: return result.engineID == "google_drive_file" && (result.title as NSString).pathExtension.uppercased() == selectedFormatFilter
             }
         }.map(MacSearchResult.web)
-        let ordered = applications + folders + contacts + remoteDrive + files
+        let ordered = applications + folders + contacts + system + remoteDrive + files
         let term = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if ordered.isEmpty, !term.isEmpty, searchRoot == nil {
             return fallbackWebResults(for: term).map(MacSearchResult.web)
@@ -611,6 +731,8 @@ final class AppModel: ObservableObject {
             if let index = recentItems.firstIndex(where: { $0.url.standardizedFileURL == file.url.standardizedFileURL }) {
                 recencyBonus = max(15, 90 - index * 6)
             }
+        case .system(let result):
+            candidates = [result.title.lowercased(), result.subtitle.lowercased()]
         case .web(let web):
             candidates = [web.title.lowercased()]
         }
@@ -628,6 +750,7 @@ final class AppModel: ObservableObject {
         switch result {
         case .file(let file): return "file|\(file.url.standardizedFileURL.path)"
         case .contact(let contact): return "contact|\(contact.id)"
+        case .system(let result): return "system|\(result.id)"
         case .web(let web): return "web|\(web.id)"
         }
     }
@@ -649,6 +772,7 @@ final class AppModel: ObservableObject {
         switch result {
         case .file(let file): kind = file.isDirectory ? "folder" : (file.url.pathExtension.lowercased() == "app" ? "application" : "file")
         case .contact: kind = "contact"
+        case .system: kind = "system"
         case .web(let web): kind = web.engineID.hasPrefix("google_drive_") ? "google-drive" : "web"
         }
         let key = targetKey(for: result)
@@ -831,7 +955,7 @@ final class AppModel: ObservableObject {
             return
         }
         switch mode {
-        case .files, .notes:
+        case .files, .browser, .notes:
             updateSearch()
         case .google:
             submitGoogleSearch()
@@ -841,6 +965,137 @@ final class AppModel: ObservableObject {
             guard lastModeSubmittedAIQuery != term else { return }
             lastModeSubmittedAIQuery = term
             Task { await sendQuestion() }
+        }
+    }
+
+    var starredBrowserFolders: [URL] {
+        settings.starredFolders.map(URL.init(fileURLWithPath:)).filter { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    var browserLocations: [BrowserLocation] { BrowserLocation.available }
+
+    func openBrowserFavorite(_ folder: URL) {
+        browserColumns = [makeBrowserColumn(folder)]
+        browserActiveColumn = 0
+        if let index = starredBrowserFolders.firstIndex(where: { $0.standardizedFileURL.path == folder.standardizedFileURL.path }) {
+            browserFavoriteSelection = index
+        }
+        refreshCloudBrowserColumn(at: 0)
+    }
+
+    func moveBrowserSelection(_ offset: Int) {
+        if browserActiveColumn < 0 {
+            let favorites = starredBrowserFolders
+            guard !favorites.isEmpty else { return }
+            browserFavoriteSelection = (browserFavoriteSelection + offset + favorites.count) % favorites.count
+            return
+        }
+        guard browserColumns.indices.contains(browserActiveColumn), !browserColumns[browserActiveColumn].items.isEmpty else { return }
+        let count = browserColumns[browserActiveColumn].items.count
+        browserColumns[browserActiveColumn].selection = (browserColumns[browserActiveColumn].selection + offset + count) % count
+    }
+
+    func browserMoveRight() {
+        if browserActiveColumn < 0 {
+            let favorites = starredBrowserFolders
+            guard favorites.indices.contains(browserFavoriteSelection) else { return }
+            openBrowserFavorite(favorites[browserFavoriteSelection])
+            return
+        }
+        guard let item = selectedBrowserItem, item.isNavigableFolder else { return }
+        browserColumns = Array(browserColumns.prefix(browserActiveColumn + 1)) + [makeBrowserColumn(item.url)]
+        browserActiveColumn += 1
+        refreshCloudBrowserColumn(at: browserActiveColumn)
+    }
+
+    func browserMoveLeft() {
+        if browserActiveColumn == 0 {
+            browserColumns = []
+            browserActiveColumn = -1
+            return
+        }
+        guard browserActiveColumn > 0 else { return }
+        browserColumns.removeLast(browserColumns.count - browserActiveColumn)
+        browserActiveColumn -= 1
+    }
+
+    func activateBrowserSelection() {
+        if browserActiveColumn < 0 {
+            browserMoveRight()
+            return
+        }
+        guard let item = selectedBrowserItem else { return }
+        if item.isNavigableFolder { browserMoveRight() }
+        else {
+            let openURL: URL
+            if item.isGoogleDriveItem && item.isMediaFile {
+                // Opening the DriveFS path asks File Provider to materialize the
+                // cloud-only item, then macOS routes it to the default media app.
+                openURL = item.url
+            } else {
+                openURL = FileManager.default.fileExists(atPath: item.url.path) ? item.url : (item.remoteURL ?? item.url)
+            }
+            NSWorkspace.shared.open(openURL)
+            NSApp.keyWindow?.orderOut(nil)
+        }
+    }
+
+    var selectedBrowserItem: FileResult? {
+        guard browserColumns.indices.contains(browserActiveColumn) else { return nil }
+        let column = browserColumns[browserActiveColumn]
+        return column.items.indices.contains(column.selection) ? column.items[column.selection] : nil
+    }
+
+    func selectBrowserItem(column: Int, index: Int, openFolder: Bool = false) {
+        guard browserColumns.indices.contains(column), browserColumns[column].items.indices.contains(index) else { return }
+        browserActiveColumn = column
+        browserColumns[column].selection = index
+        browserColumns = Array(browserColumns.prefix(column + 1))
+        if openFolder, browserColumns[column].items[index].isNavigableFolder { browserMoveRight() }
+    }
+
+    private func refreshBrowserColumn() {
+        guard browserColumns.indices.contains(browserActiveColumn) else { return }
+        let folder = browserColumns[browserActiveColumn].folder
+        browserColumns = Array(browserColumns.prefix(browserActiveColumn + 1))
+        browserColumns[browserActiveColumn] = makeBrowserColumn(folder)
+        refreshCloudBrowserColumn(at: browserActiveColumn)
+    }
+
+    private func makeBrowserColumn(_ folder: URL) -> BrowserColumn {
+        let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let urls = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isDirectoryKey, .isHiddenKey], options: [.skipsHiddenFiles])) ?? []
+        let items = urls.map(FileResult.init(url:)).filter { term.isEmpty || $0.name.localizedCaseInsensitiveContains(term) }.sorted {
+            if $0.isDirectory != $1.isDirectory { return $0.isDirectory }
+            return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
+        return BrowserColumn(folder: folder, items: items, selection: 0)
+    }
+
+    private func refreshCloudBrowserColumns() {
+        for index in browserColumns.indices { refreshCloudBrowserColumn(at: index) }
+    }
+
+    private func refreshCloudBrowserColumn(at index: Int) {
+        guard browserColumns.indices.contains(index) else { return }
+        let folder = browserColumns[index].folder
+        guard GoogleDriveCatalogBrowser.isGoogleDriveURL(folder) else { return }
+        Task { [weak self] in
+            let catalogItems = await GoogleDriveCatalogBrowser.children(of: folder)
+            guard let self, self.browserColumns.indices.contains(index),
+                  self.browserColumns[index].folder.standardizedFileURL.path == folder.standardizedFileURL.path else { return }
+            let localItems = self.makeBrowserColumn(folder).items
+            let term = self.query.trimmingCharacters(in: .whitespacesAndNewlines)
+            var itemsByName = Dictionary(uniqueKeysWithValues: catalogItems.map { ($0.name.lowercased(), $0) })
+            for item in localItems { itemsByName[item.name.lowercased()] = item }
+            let items = itemsByName.values.filter { term.isEmpty || $0.name.localizedCaseInsensitiveContains(term) }.sorted {
+                if $0.isDirectory != $1.isDirectory { return $0.isDirectory }
+                return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+            }
+            let previousName = self.browserColumns[index].items.indices.contains(self.browserColumns[index].selection)
+                ? self.browserColumns[index].items[self.browserColumns[index].selection].name : nil
+            self.browserColumns[index].items = items
+            self.browserColumns[index].selection = previousName.flatMap { name in items.firstIndex { $0.name == name } } ?? 0
         }
     }
 
@@ -872,11 +1127,21 @@ final class AppModel: ObservableObject {
 
     func submitGoogleSearch() {
         let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !term.isEmpty, let engine = settings.webEngines.first(where: { $0.id == "google" }),
-              let escaped = term.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: engine.searchURL + escaped) else { return }
+        guard !term.isEmpty else { return }
         rememberCurrentSearch()
-        googleSearchURL = url
+        googleSearchURL = nil
+        webResults = []
+        isSearchingWeb = true
+        errorMessage = nil
+        webSearchTask?.cancel()
+        webSearchTask = Task {
+            do {
+                let matches = try await WebSearchService.googleCustomSearch(term, image: false, settings: settings)
+                guard !Task.isCancelled, mode == .google, query.trimmingCharacters(in: .whitespacesAndNewlines) == term else { return }
+                webResults = matches
+            } catch { errorMessage = error.localizedDescription }
+            isSearchingWeb = false
+        }
     }
 
     func submitImageSearch() {
@@ -887,10 +1152,20 @@ final class AppModel: ObservableObject {
         imageResults = []
         selectedImageResult = nil
         imageSearchFailed = false
-        if let escaped = term.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
-            imageSearchURL = URL(string: "https://www.google.com/search?udm=2&safe=active&hl=en&q=\(escaped)")
-        }
+        imageSearchURL = nil
         webSearchTask?.cancel()
+        webSearchTask = Task {
+            do {
+                let matches = try await WebSearchService.googleCustomSearch(term, image: true, settings: settings)
+                guard !Task.isCancelled, mode == .images, query.trimmingCharacters(in: .whitespacesAndNewlines) == term else { return }
+                imageResults = matches
+                imageSearchFailed = matches.isEmpty
+            } catch {
+                errorMessage = error.localizedDescription
+                imageSearchFailed = true
+            }
+            isSearchingWeb = false
+        }
     }
 
     func acceptGoogleImageURLs(_ urls: [URL], sourceURL: URL) {
@@ -962,6 +1237,7 @@ final class AppModel: ObservableObject {
             switch result {
             case .file(let file): return file.url.pathExtension.lowercased() == "app" ? file.url.deletingPathExtension().lastPathComponent : file.name
             case .contact(let contact): return contact.displayName
+            case .system(let result): return result.title
             case .web(let web): return web.title
             }
         }.first { $0.count > term.count && $0.lowercased().hasPrefix(term.lowercased()) }
@@ -1074,18 +1350,22 @@ final class AppModel: ObservableObject {
         }
         isIndexingGoogleDrive = true
         googleDriveSearchTask = Task {
-            try? await Task.sleep(for: .milliseconds(260))
+            try? await Task.sleep(for: .milliseconds(35))
             guard !Task.isCancelled else { isIndexingGoogleDrive = false; return }
             let lookupTerm = primaryMacLookupTerm(for: term)
             async let directMatches = GoogleDriveDirectSearch.find(lookupTerm)
-            async let catalogMatches = GoogleDriveCatalogSearch.find(lookupTerm)
-            let (matches, catalog) = await (directMatches, catalogMatches)
+            let catalog = await GoogleDriveCatalogSearch.find(lookupTerm)
             guard !Task.isCancelled, query.trimmingCharacters(in: .whitespacesAndNewlines) == term else { isIndexingGoogleDrive = false; return }
-            googleDriveResults = applySearchRules(to: matches.filter { matchesNaturalMacQuery($0, query: term) })
             googleDriveCatalogResults = catalog.filter { matchesNaturalWebQuery($0, query: term) }
             updateMacQuerySuggestion(for: term)
             selection = min(selection, max(0, visibleSearchResults.count - 1))
             isIndexingGoogleDrive = false
+
+            let matches = await directMatches
+            guard !Task.isCancelled, query.trimmingCharacters(in: .whitespacesAndNewlines) == term else { return }
+            googleDriveResults = applySearchRules(to: matches.filter { matchesNaturalMacQuery($0, query: term) })
+            updateMacQuerySuggestion(for: term)
+            selection = min(selection, max(0, visibleSearchResults.count - 1))
         }
     }
 
@@ -1378,6 +1658,16 @@ final class AppModel: ObservableObject {
     }
 
     func activateSelection() {
+        if visibleSearchResults.indices.contains(selection), case .system(let result) = visibleSearchResults[selection] {
+            rememberChoice(.system(result))
+            if let url = result.url {
+                NSWorkspace.shared.open(url)
+                NSApp.keyWindow?.orderOut(nil)
+            } else {
+                errorMessage = "Spotlight found this \(result.category.lowercased()), but its source app did not provide an openable URL."
+            }
+            return
+        }
         if let web = selectedWebResult {
             rememberChoice(.web(web))
             if web.engineID.hasPrefix("google_drive_") { openGoogleDriveResult(web) }
@@ -1396,7 +1686,9 @@ final class AppModel: ObservableObject {
             NSWorkspace.shared.open(result.url)
             return
         }
-        guard let localURL = googleDriveLocalURL(for: result) else {
+        let mediaExtensions = Set(["png", "jpg", "jpeg", "gif", "heic", "tif", "tiff", "svg", "webp", "mov", "mp4", "m4v", "avi", "mkv", "webm", "mp3", "m4a", "wav", "aac", "flac", "aiff"])
+        let isMedia = mediaExtensions.contains((result.title as NSString).pathExtension.lowercased())
+        guard let localURL = googleDriveLocalURL(for: result, allowCloudOnly: isMedia) else {
             errorMessage = "Google Drive has not exposed this item to Finder yet. Opening its Drive link instead."
             NSWorkspace.shared.open(result.url)
             return
@@ -1416,7 +1708,7 @@ final class AppModel: ObservableObject {
         enterFolder(localURL)
     }
 
-    private func googleDriveLocalURL(for result: WebSearchResult) -> URL? {
+    private func googleDriveLocalURL(for result: WebSearchResult, allowCloudOnly: Bool = false) -> URL? {
         let relativePath = result.subtitle
         guard !relativePath.isEmpty else { return nil }
         let cloudStorage = FileManager.default.homeDirectoryForCurrentUser
@@ -1426,13 +1718,19 @@ final class AppModel: ObservableObject {
             includingPropertiesForKeys: [.isDirectoryKey],
             options: [.skipsHiddenFiles]
         ))?.filter { $0.lastPathComponent.lowercased().hasPrefix("googledrive-") } ?? []
+        var cloudOnlyCandidate: URL?
         for root in roots {
             for driveRoot in ["My Drive", "Shared drives"] {
                 let localURL = root.appendingPathComponent(driveRoot).appendingPathComponent(relativePath)
                 if FileManager.default.fileExists(atPath: localURL.path) { return localURL }
+                if allowCloudOnly,
+                   cloudOnlyCandidate == nil,
+                   FileManager.default.fileExists(atPath: localURL.deletingLastPathComponent().path) {
+                    cloudOnlyCandidate = localURL
+                }
             }
         }
-        return nil
+        return cloudOnlyCandidate
     }
 
     func revealSelection() {
@@ -1529,9 +1827,6 @@ final class AppModel: ObservableObject {
     }
 
     var selectedLauncherNote: SavedNote? {
-        if showingLauncherNote, let launcherNoteID {
-            return savedNotes.first { $0.id == launcherNoteID }
-        }
         return launcherNotes.indices.contains(noteListSelection) ? launcherNotes[noteListSelection] : nil
     }
 
@@ -1551,6 +1846,11 @@ final class AppModel: ObservableObject {
 
     func closeLauncherNote() {
         showingLauncherNote = false
+        persistNotes()
+    }
+
+    func saveNotesOnExit() {
+        persistNotes()
     }
 
     func updateSavedNote(id: UUID, html: String) {

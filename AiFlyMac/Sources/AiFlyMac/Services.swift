@@ -2,8 +2,56 @@ import Foundation
 import Security
 import Carbon.HIToolbox
 import Contacts
+import CoreSpotlight
 
 enum WebSearchService {
+    enum GoogleSearchError: LocalizedError {
+        case missingCredentials
+        case api(String)
+        var errorDescription: String? {
+            switch self {
+            case .missingCredentials: return "Add your Google Custom Search API key and Search Engine ID in Settings → Web Search."
+            case .api(let message): return "Google Search API: \(message)"
+            }
+        }
+    }
+
+    static func googleCustomSearch(_ term: String, image: Bool, settings: AppSettings) async throws -> [WebSearchResult] {
+        let key = settings.googleSearchAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let engineID = settings.googleSearchEngineID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty, !engineID.isEmpty else { throw GoogleSearchError.missingCredentials }
+        var components = URLComponents(string: "https://customsearch.googleapis.com/customsearch/v1")
+        components?.queryItems = [
+            URLQueryItem(name: "key", value: key),
+            URLQueryItem(name: "cx", value: engineID),
+            URLQueryItem(name: "q", value: term),
+            URLQueryItem(name: "safe", value: "active"),
+            URLQueryItem(name: "num", value: "10")
+        ] + (image ? [URLQueryItem(name: "searchType", value: "image")] : [])
+        guard let url = components?.url else { throw GoogleSearchError.api("Invalid request.") }
+        let (data, response) = try await URLSession.shared.data(from: url)
+        if let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let error = payload["error"] as? [String: Any],
+           let message = error["message"] as? String { throw GoogleSearchError.api(message) }
+        guard (response as? HTTPURLResponse)?.statusCode == 200,
+              let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let items = payload["items"] as? [[String: Any]] else { return [] }
+        return items.compactMap { item in
+            guard let title = item["title"] as? String,
+                  let link = item["link"] as? String,
+                  let resultURL = URL(string: link) else { return nil }
+            let snippet = item["snippet"] as? String ?? (item["displayLink"] as? String ?? "Google result")
+            let imageInfo = item["image"] as? [String: Any]
+            let thumbnail = (imageInfo?["thumbnailLink"] as? String).flatMap(URL.init(string:))
+            let contextURL = (imageInfo?["contextLink"] as? String).flatMap(URL.init(string:)) ?? resultURL
+            return WebSearchResult(
+                id: "google-api|\(link)", engineID: image ? "images" : "google",
+                title: title, subtitle: snippet, url: contextURL,
+                thumbnailURL: image ? (thumbnail ?? resultURL) : nil, isFallback: false
+            )
+        }
+    }
+
     static func completion(for term: String) async -> String? {
         let values = await suggestions(term, youtube: false)
         return values.first { $0.localizedCaseInsensitiveCompare(term) != .orderedSame }
@@ -27,17 +75,42 @@ enum WebSearchService {
               let searchURL = URL(string: "https://www.google.com/search?tbm=isch&q=\(escaped)") else { return [] }
         var request = URLRequest(url: searchURL)
         request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Safari/605.1.15", forHTTPHeaderField: "User-Agent")
-        guard let (data, _) = try? await URLSession.shared.data(for: request),
-              let html = String(data: data, encoding: .utf8) else { return [] }
-        let pattern = #"https://encrypted-tbn[0-9]\.gstatic\.com/images\?[^\" ]+"#
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
-        let range = NSRange(html.startIndex..<html.endIndex, in: html)
+        if let (data, _) = try? await URLSession.shared.data(for: request),
+           let html = String(data: data, encoding: .utf8),
+           let regex = try? NSRegularExpression(pattern: #"https://encrypted-tbn[0-9]\.gstatic\.com/images\?[^\" ]+"#) {
+            let range = NSRange(html.startIndex..<html.endIndex, in: html)
+            var seen = Set<String>()
+            let googleResults = regex.matches(in: html, range: range).compactMap { match -> WebSearchResult? in
+                guard let swiftRange = Range(match.range, in: html) else { return nil }
+                let raw = String(html[swiftRange]).replacingOccurrences(of: "&amp;", with: "&")
+                guard seen.insert(raw).inserted, let thumbnail = URL(string: raw) else { return nil }
+                return WebSearchResult(id: "image|\(raw)", engineID: "images", title: term, subtitle: "Google Images", url: searchURL, thumbnailURL: thumbnail, isFallback: false)
+            }
+            if !googleResults.isEmpty { return Array(googleResults.prefix(40)) }
+        }
+
+        // Google frequently serves an SG_REL anti-automation page to embedded WebKit.
+        // Use a server-rendered image feed so the native gallery does not remain blank.
+        guard let fallbackURL = URL(string: "https://www.bing.com/images/search?q=\(escaped)&safeSearch=strict") else { return [] }
+        var fallbackRequest = URLRequest(url: fallbackURL)
+        fallbackRequest.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Safari/605.1.15", forHTTPHeaderField: "User-Agent")
+        guard let (fallbackData, _) = try? await URLSession.shared.data(for: fallbackRequest),
+              let fallbackHTML = String(data: fallbackData, encoding: .utf8),
+              let attributeRegex = try? NSRegularExpression(pattern: #"\sm=\"([^\"]+)\""#) else { return [] }
+        let fallbackRange = NSRange(fallbackHTML.startIndex..<fallbackHTML.endIndex, in: fallbackHTML)
         var seen = Set<String>()
-        return regex.matches(in: html, range: range).compactMap { match in
-            guard let swiftRange = Range(match.range, in: html) else { return nil }
-            let raw = String(html[swiftRange]).replacingOccurrences(of: "&amp;", with: "&")
-            guard seen.insert(raw).inserted, let thumbnail = URL(string: raw) else { return nil }
-            return WebSearchResult(id: "image|\(raw)", engineID: "images", title: term, subtitle: "Google Images", url: searchURL, thumbnailURL: thumbnail, isFallback: false)
+        return attributeRegex.matches(in: fallbackHTML, range: fallbackRange).compactMap { match -> WebSearchResult? in
+            guard let valueRange = Range(match.range(at: 1), in: fallbackHTML) else { return nil }
+            let json = String(fallbackHTML[valueRange])
+                .replacingOccurrences(of: "&quot;", with: "\"")
+                .replacingOccurrences(of: "&amp;", with: "&")
+                .replacingOccurrences(of: "&#39;", with: "'")
+            guard let data = json.data(using: .utf8),
+                  let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let raw = (payload["turl"] as? String) ?? (payload["murl"] as? String),
+                  seen.insert(raw).inserted,
+                  let thumbnail = URL(string: raw) else { return nil }
+            return WebSearchResult(id: "image-fallback|\(raw)", engineID: "images", title: term, subtitle: "Image result", url: searchURL, thumbnailURL: thumbnail, isFallback: true)
         }.prefix(40).map { $0 }
     }
 
@@ -143,6 +216,43 @@ enum ContactsSearch {
 enum ContactsSearchError: LocalizedError {
     case accessDenied
     var errorDescription: String? { "Allow Contacts access in System Settings to search contacts." }
+}
+
+@MainActor
+enum CoreSpotlightSearch {
+    private static var activeQueries: [UUID: CSUserQuery] = [:]
+
+    static func find(_ term: String) async -> [SystemSearchResult] {
+        let value = term.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return [] }
+        return await withCheckedContinuation { continuation in
+            let queryID = UUID()
+            let context = CSUserQueryContext()
+            context.enableRankedResults = true
+            context.maxResultCount = 80
+            let query = CSUserQuery(userQueryString: value, userQueryContext: context)
+            var collected: [CSSearchableItem] = []
+            query.foundItemsHandler = { items in collected.append(contentsOf: items) }
+            query.completionHandler = { _ in
+                Task { @MainActor in
+                    activeQueries[queryID] = nil
+                    var seen = Set<String>()
+                    let results = collected.compactMap { item -> SystemSearchResult? in
+                        let attributes = item.attributeSet
+                        let title = attributes.displayName ?? attributes.title ?? "Spotlight Result"
+                        let subtitle = attributes.contentDescription ?? attributes.kind ?? attributes.domainIdentifier ?? "System result"
+                        let type = attributes.contentType ?? attributes.contentTypeTree?.first ?? "public.item"
+                        let url = attributes.contentURL ?? attributes.path.map { URL(fileURLWithPath: $0) }
+                        guard seen.insert(item.uniqueIdentifier).inserted else { return nil }
+                        return SystemSearchResult(id: item.uniqueIdentifier, title: title, subtitle: subtitle, contentType: type, url: url)
+                    }
+                    continuation.resume(returning: Array(results.prefix(40)))
+                }
+            }
+            activeQueries[queryID] = query
+            query.start()
+        }
+    }
 }
 
 enum InstalledApplicationSearch {
@@ -347,6 +457,24 @@ enum GoogleDriveDirectSearch {
 }
 
 enum GoogleDriveIndexRefresh {
+    static func catalogSignature() -> String {
+        let manager = FileManager.default
+        let home = manager.homeDirectoryForCurrentUser
+        let driveFS = home.appendingPathComponent("Library/Application Support/Google/DriveFS", isDirectory: true)
+        let cloudStorage = home.appendingPathComponent("Library/CloudStorage", isDirectory: true)
+        let databases = ((try? manager.contentsOfDirectory(at: driveFS, includingPropertiesForKeys: nil)) ?? [])
+            .map { $0.appendingPathComponent("metadata_sqlite_db") }
+            .filter { manager.fileExists(atPath: $0.path) }
+        let databaseState = databases.map { url -> String in
+            let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+            return "\(url.path):\(values?.contentModificationDate?.timeIntervalSince1970 ?? 0):\(values?.fileSize ?? 0)"
+        }.sorted()
+        let mounts = ((try? manager.contentsOfDirectory(at: cloudStorage, includingPropertiesForKeys: nil)) ?? [])
+            .filter { $0.lastPathComponent.lowercased().hasPrefix("googledrive-") }
+            .map(\.path).sorted()
+        return (databaseState + mounts).joined(separator: "|")
+    }
+
     static func force() async {
         await Task.detached(priority: .utility) {
             let manager = FileManager.default
@@ -375,6 +503,81 @@ enum GoogleDriveIndexRefresh {
                 }
             }
         }.value
+    }
+}
+
+enum GoogleDriveCatalogBrowser {
+    static func isGoogleDriveURL(_ url: URL) -> Bool {
+        url.standardizedFileURL.path.lowercased().contains("/library/cloudstorage/googledrive-")
+    }
+
+    static func children(of folder: URL) async -> [FileResult] {
+        await Task.detached(priority: .utility) { scanChildren(of: folder) }.value
+    }
+
+    private static func scanChildren(of folder: URL) -> [FileResult] {
+        let standardizedPath = folder.standardizedFileURL.path
+        guard let markerRange = standardizedPath.range(of: "/Library/CloudStorage/GoogleDrive-", options: [.caseInsensitive]) else { return [] }
+        let afterMarker = standardizedPath[markerRange.upperBound...]
+        guard let slash = afterMarker.firstIndex(of: "/") else { return [] }
+        let relativePath = String(afterMarker[afterMarker.index(after: slash)...])
+        let components = relativePath.split(separator: "/").map(String.init).filter { !$0.isEmpty }
+        guard !components.isEmpty else { return [] }
+
+        let manager = FileManager.default
+        let driveFS = manager.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Google/DriveFS", isDirectory: true)
+        let accounts = (try? manager.contentsOfDirectory(at: driveFS, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
+        var found: [String: FileResult] = [:]
+
+        for account in accounts {
+            let database = account.appendingPathComponent("metadata_sqlite_db")
+            guard manager.fileExists(atPath: database.path) else { continue }
+            var parentID: String?
+            for component in components {
+                let title = sqlQuote(component)
+                let query: String
+                if let parentID {
+                    query = "SELECT c.stable_id FROM items c JOIN stable_parents sp ON sp.item_stable_id=c.stable_id WHERE sp.parent_stable_id=\(parentID) AND c.trashed=0 AND c.is_tombstone=0 AND c.local_title='\(title)' COLLATE NOCASE LIMIT 1;"
+                } else {
+                    query = "SELECT stable_id FROM items WHERE trashed=0 AND is_tombstone=0 AND is_folder=1 AND local_title='\(title)' COLLATE NOCASE LIMIT 1;"
+                }
+                parentID = sqlite(database: database, query: query).first?.first
+                if parentID == nil { break }
+            }
+            guard let parentID else { continue }
+            let query = "SELECT c.id,replace(replace(c.local_title,char(9),' '),char(10),' '),c.is_folder FROM items c JOIN stable_parents sp ON sp.item_stable_id=c.stable_id WHERE sp.parent_stable_id=\(parentID) AND c.trashed=0 AND c.is_tombstone=0 AND c.local_title IS NOT NULL ORDER BY c.is_folder DESC,c.local_title COLLATE NOCASE;"
+            for fields in sqlite(database: database, query: query) where fields.count >= 3 {
+                let title = fields[1]
+                let isFolder = fields[2] == "1"
+                let localURL = folder.appendingPathComponent(title, isDirectory: isFolder)
+                let remoteURL = URL(string: "https://drive.google.com/open?id=\(fields[0])")
+                found[title.lowercased()] = FileResult(url: localURL, directoryHint: isFolder, remoteURL: remoteURL)
+            }
+        }
+        return Array(found.values)
+    }
+
+    private static func sqlite(database: URL, query: String) -> [[String]] {
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        process.arguments = ["-readonly", "-separator", "\t", database.path, query]
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else { return [] }
+            return String(decoding: data, as: UTF8.self).split(separator: "\n").map {
+                $0.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            }
+        } catch { return [] }
+    }
+
+    private static func sqlQuote(_ value: String) -> String {
+        value.replacingOccurrences(of: "'", with: "''")
     }
 }
 
@@ -442,96 +645,17 @@ enum GoogleDriveCatalogSearch {
     }
 }
 
-enum PersistentSpotlightIndex {
-    private static let refreshInterval: TimeInterval = 15 * 60
-    private static var indexURL: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/AiFly", isDirectory: true)
-            .appendingPathComponent("spotlight-index.sqlite")
-    }
-
-    static func refreshIfNeeded(force: Bool = false) async {
-        await Task.detached(priority: .utility) {
-            let manager = FileManager.default
-            let database = indexURL
-            if !force,
-               let values = try? database.resourceValues(forKeys: [.contentModificationDateKey]),
-               let modified = values.contentModificationDate,
-               Date().timeIntervalSince(modified) < refreshInterval { return }
-            try? manager.createDirectory(at: database.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let temporary = database.deletingLastPathComponent().appendingPathComponent("spotlight-index-new.sqlite")
-            try? manager.removeItem(at: temporary)
-
-            let spotlight = Process()
-            let spotlightOutput = Pipe()
-            spotlight.executableURL = URL(fileURLWithPath: "/usr/bin/mdfind")
-            spotlight.arguments = ["-onlyin", manager.homeDirectoryForCurrentUser.path, "kMDItemFSName != \"\""]
-            spotlight.standardOutput = spotlightOutput
-            spotlight.standardError = FileHandle.nullDevice
-            let sqlite = Process()
-            let sqliteInput = Pipe()
-            sqlite.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
-            sqlite.arguments = [temporary.path]
-            sqlite.standardInput = sqliteInput
-            sqlite.standardOutput = FileHandle.nullDevice
-            sqlite.standardError = FileHandle.nullDevice
-            do {
-                try sqlite.run()
-                let writer = sqliteInput.fileHandleForWriting
-                writer.write(Data("PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF; CREATE TABLE entries(path TEXT PRIMARY KEY, name TEXT NOT NULL COLLATE NOCASE); CREATE VIRTUAL TABLE entries_fts USING fts5(name, path UNINDEXED, tokenize='unicode61'); BEGIN;\n".utf8))
-                try spotlight.run()
-                let data = spotlightOutput.fileHandleForReading.readDataToEndOfFile()
-                spotlight.waitUntilExit()
-                for rawPath in data.split(separator: 10) {
-                    let path = String(decoding: rawPath, as: UTF8.self)
-                    guard !path.isEmpty else { continue }
-                    let name = URL(fileURLWithPath: path).lastPathComponent
-                    let escapedPath = path.replacingOccurrences(of: "'", with: "''")
-                    let escapedName = name.replacingOccurrences(of: "'", with: "''")
-                    writer.write(Data("INSERT OR IGNORE INTO entries VALUES('\(escapedPath)','\(escapedName)');\n".utf8))
-                    writer.write(Data("INSERT INTO entries_fts(name,path) VALUES('\(escapedName)','\(escapedPath)');\n".utf8))
-                }
-                writer.write(Data("COMMIT;\n".utf8))
-                try writer.close()
-                sqlite.waitUntilExit()
-                guard sqlite.terminationStatus == 0 else { try? manager.removeItem(at: temporary); return }
-                if manager.fileExists(atPath: database.path) { try? manager.removeItem(at: database) }
-                try? manager.moveItem(at: temporary, to: database)
-            } catch { try? manager.removeItem(at: temporary) }
-        }.value
-    }
-
-    static func find(_ term: String) async -> [FileResult] {
-        await Task.detached(priority: .userInitiated) {
-            let database = indexURL
-            guard FileManager.default.fileExists(atPath: database.path) else { return [] }
-            let tokens = term.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
-            guard !tokens.isEmpty else { return [] }
-            let match = tokens.map { "\"\($0.replacingOccurrences(of: "\"", with: "\"\""))\"*" }.joined(separator: " AND ")
-            let process = Process()
-            let output = Pipe()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
-            process.arguments = ["-readonly", database.path, "SELECT path FROM entries_fts WHERE entries_fts MATCH '\(match)' ORDER BY rank LIMIT 300;"]
-            process.standardOutput = output
-            process.standardError = FileHandle.nullDevice
-            do {
-                try process.run()
-                let data = output.fileHandleForReading.readDataToEndOfFile()
-                process.waitUntilExit()
-                return String(decoding: data, as: UTF8.self).split(separator: "\n").compactMap {
-                    let path = String($0)
-                    return FileManager.default.fileExists(atPath: path) ? FileResult(url: URL(fileURLWithPath: path)) : nil
-                }
-            } catch { return [] }
-        }.value
-    }
-}
-
 enum SearchLearningStore {
     private static var databaseURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/AiFly", isDirectory: true)
             .appendingPathComponent("search-learning.sqlite")
+    }
+
+    private static var spotlightDatabaseURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/AiFly/Indexes", isDirectory: true)
+            .appendingPathComponent("spotlight-cache.sqlite")
     }
 
     static func record(query: String, targetKey: String, kind: String) async {
@@ -562,12 +686,59 @@ enum SearchLearningStore {
         }.value
     }
 
+    static func cachedSpotlightResults(for term: String) async -> [FileResult] {
+        await Task.detached(priority: .userInitiated) {
+            let normalized = term.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !normalized.isEmpty else { return [] }
+            prepareSpotlightCache()
+            let escaped = normalized.replacingOccurrences(of: "'", with: "''")
+            let output = runSpotlightCache("SELECT path FROM spotlight_cache WHERE name LIKE '%\(escaped)%' ORDER BY CASE WHEN lower(name) LIKE '\(escaped)%' THEN 0 ELSE 1 END,last_seen DESC LIMIT 200;", capture: true)
+            return output.split(separator: "\n").compactMap { value in
+                let path = String(value)
+                guard FileManager.default.fileExists(atPath: path) else { return nil }
+                return FileResult(url: URL(fileURLWithPath: path))
+            }
+        }.value
+    }
+
+    static func cacheSpotlightResults(_ results: [FileResult]) async {
+        guard !results.isEmpty else { return }
+        await Task.detached(priority: .utility) {
+            prepareSpotlightCache()
+            let rows = results.map { result -> String in
+                let path = result.url.standardizedFileURL.path.replacingOccurrences(of: "'", with: "''")
+                let name = result.name.replacingOccurrences(of: "'", with: "''")
+                return "INSERT INTO spotlight_cache(path,name,last_seen) VALUES('\(path)','\(name)',strftime('%s','now')) ON CONFLICT(path) DO UPDATE SET name=excluded.name,last_seen=excluded.last_seen;"
+            }.joined()
+            runSpotlightCache("BEGIN;\(rows)COMMIT;")
+        }.value
+    }
+
+    private static func prepareSpotlightCache() {
+        let manager = FileManager.default
+        let target = spotlightDatabaseURL
+        try? manager.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let isNew = !manager.fileExists(atPath: target.path)
+        runSpotlightCache("CREATE TABLE IF NOT EXISTS spotlight_cache(path TEXT PRIMARY KEY,name TEXT NOT NULL COLLATE NOCASE,last_seen REAL NOT NULL);")
+        guard isNew, manager.fileExists(atPath: databaseURL.path) else { return }
+        let legacyTable = run("SELECT name FROM sqlite_master WHERE type='table' AND name='spotlight_cache';", capture: true)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard legacyTable == "spotlight_cache" else { return }
+        let legacyPath = databaseURL.path.replacingOccurrences(of: "'", with: "''")
+        runSpotlightCache("ATTACH DATABASE '\(legacyPath)' AS legacy; INSERT OR IGNORE INTO spotlight_cache(path,name,last_seen) SELECT path,name,last_seen FROM legacy.spotlight_cache; DETACH DATABASE legacy;")
+    }
+
     @discardableResult
-    private static func run(_ sql: String, capture: Bool = false) -> String {
+    private static func runSpotlightCache(_ sql: String, capture: Bool = false) -> String {
+        run(sql, capture: capture, database: spotlightDatabaseURL)
+    }
+
+    @discardableResult
+    private static func run(_ sql: String, capture: Bool = false, database: URL? = nil) -> String {
         let process = Process()
         let output = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
-        process.arguments = [databaseURL.path, sql]
+        process.arguments = [(database ?? databaseURL).path, sql]
         process.standardOutput = capture ? output : FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         do {
@@ -636,10 +807,6 @@ enum SpotlightSearch {
 
     static func find(_ term: String, inside folder: URL? = nil) async -> [FileResult] {
         if let folder { return await FolderSearch.find(term, inside: folder) }
-        let savedResults = await PersistentSpotlightIndex.find(term)
-        if !savedResults.isEmpty { return savedResults }
-        let commandResults = await SpotlightCommandFallback.find(term)
-        if !commandResults.isEmpty { return commandResults }
         let nativeResults: [FileResult] = await withCheckedContinuation { continuation in
             let id = UUID()
             let session = SpotlightQuerySession(term: term) { results in
@@ -649,7 +816,8 @@ enum SpotlightSearch {
             activeQueries[id] = session
             session.start()
         }
-        return nativeResults
+        if !nativeResults.isEmpty { return nativeResults }
+        return await SpotlightCommandFallback.find(term)
     }
 }
 
@@ -742,7 +910,7 @@ private final class SpotlightQuerySession {
 
         // Initial Spotlight gathering can take several seconds on large home
         // folders. Only time out after giving the metadata index time to reply.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
             self?.finish()
         }
     }

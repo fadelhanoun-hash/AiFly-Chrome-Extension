@@ -88,6 +88,7 @@ struct LauncherView: View {
             Group {
                 switch model.mode {
                 case .files: fileResults
+                case .browser: browserView
                 case .ask: chat
                 case .notes: notesList
                 case .google: googleSearch
@@ -96,10 +97,10 @@ struct LauncherView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            if model.mode == .files && (model.isIndexingGoogleDrive || model.isSearchingFiles || model.isRefreshingPersistentIndex) {
+            if model.mode == .files && (model.isIndexingGoogleDrive || model.isSearchingFiles) {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.mini)
-                    Text(model.isIndexingGoogleDrive ? "Indexing Google Drive…" : (model.isRefreshingPersistentIndex ? "Updating saved Spotlight index…" : "Searching Mac index…"))
+                    Text(model.isIndexingGoogleDrive ? "Indexing Google Drive…" : "Searching Spotlight…")
                         .font(.caption)
                         .foregroundStyle(model.settings.theme.secondaryText)
                     Spacer()
@@ -139,6 +140,7 @@ struct LauncherView: View {
     private var searchPlaceholder: String {
         switch model.mode {
         case .files: return model.searchPlaceholder
+        case .browser: return "Search selected folder…"
         case .ask: return "Ask AiFly anything…"
         case .notes: return "Search notes…"
         case .google: return "Search Google…"
@@ -149,11 +151,81 @@ struct LauncherView: View {
     private var modeIcon: String {
         switch model.mode {
         case .files: return "magnifyingglass"
+        case .browser: return "folder"
         case .ask: return "sparkles"
         case .notes: return "note.text"
         case .google: return "globe"
         case .images: return "photo.on.rectangle.angled"
         }
+    }
+
+    private var browserView: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal) {
+                HStack(spacing: 0) {
+                ScrollView {
+                    LazyVStack(spacing: 2) {
+                        Text("Favorites").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(8)
+                        ForEach(Array(model.starredBrowserFolders.enumerated()), id: \.element.path) { index, folder in
+                            Button { model.openBrowserFavorite(folder) } label: {
+                                HStack(spacing: 8) {
+                                    Image(nsImage: NSWorkspace.shared.icon(forFile: folder.path)).resizable().scaledToFit().frame(width: 20, height: 20)
+                                    Text(folder.lastPathComponent).lineLimit(1)
+                                    Spacer()
+                                    Image(systemName: "chevron.right").font(.caption)
+                                }
+                                .padding(.horizontal, 8).frame(height: 34)
+                                .background(index == model.browserFavoriteSelection ? model.settings.theme.selection : .clear)
+                            }.buttonStyle(.plain)
+                        }
+                        if model.starredBrowserFolders.isEmpty {
+                            Text("Star folders in Settings → Browser").font(.caption).foregroundStyle(.secondary).padding(12)
+                        }
+                    }.padding(6)
+                }
+                .frame(width: 230)
+                .id("browser-favorites")
+                Divider()
+
+                if model.browserColumns.isEmpty {
+                    EmptyStateView(title: "Choose a favorite", systemImage: "folder", description: "Select a starred folder to open the next column.")
+                        .frame(width: 460)
+                        .frame(maxHeight: .infinity)
+                } else {
+                        ForEach(Array(model.browserColumns.enumerated()), id: \.element.id) { columnIndex, column in
+                            ScrollView {
+                                LazyVStack(spacing: 2) {
+                                    Text(column.folder.lastPathComponent).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading).padding(8)
+                                    ForEach(Array(column.items.enumerated()), id: \.element.id) { index, item in
+                                        Button { model.selectBrowserItem(column: columnIndex, index: index, openFolder: item.isNavigableFolder) } label: {
+                                            HStack(spacing: 8) {
+                                                Image(nsImage: item.icon).resizable().scaledToFit().frame(width: 20, height: 20)
+                                                Text(item.name).lineLimit(1)
+                                                Spacer()
+                                                if item.isNavigableFolder { Image(systemName: "chevron.right").font(.caption) }
+                                            }
+                                            .padding(.horizontal, 8).frame(height: 34)
+                                            .background(columnIndex == model.browserActiveColumn && index == column.selection ? model.settings.theme.selection : .clear)
+                                        }.buttonStyle(.plain)
+                                    }
+                                }.padding(6)
+                            }
+                            .frame(width: 230)
+                            .id("browser-column-\(columnIndex)")
+                            Divider()
+                        }
+                }
+            }
+            }
+            .onChange(of: model.browserActiveColumn) { column in
+                withAnimation(.easeOut(duration: 0.16)) {
+                    proxy.scrollTo(column < 0 ? "browser-favorites" : "browser-column-\(column)", anchor: column < 0 ? .leading : .trailing)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func focusSearchField() {
@@ -291,6 +363,12 @@ struct LauncherView: View {
                                         .contentShape(Rectangle())
                                         .onTapGesture(count: 2) { model.selectSearchResult(at: index); model.showContactDetails() }
                                         .onTapGesture { model.selectSearchResult(at: index); model.hideActions() }
+                                case .system(let result):
+                                    SystemResultRow(result: result, selected: model.hasActivatedResultPreview && index == model.selection)
+                                        .id(index)
+                                        .contentShape(Rectangle())
+                                        .onTapGesture(count: 2) { model.selectSearchResult(at: index); model.activateSelection() }
+                                        .onTapGesture { model.selectSearchResult(at: index); model.hideActions(); model.hideContactDetails() }
                                 case .web(let result):
                                     WebResultRow(result: result, selected: model.hasActivatedResultPreview && index == model.selection)
                                         .environmentObject(model)
@@ -353,8 +431,7 @@ struct LauncherView: View {
     }
 
     private var notesList: some View {
-        ZStack(alignment: .trailing) {
-            HStack(spacing: 0) {
+        HStack(spacing: 0) {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 4) {
@@ -387,41 +464,40 @@ struct LauncherView: View {
                     proxy.scrollTo(model.noteListSelection, anchor: .center)
                 }
             }
-            .frame(minWidth: 280, idealWidth: 320, maxWidth: 360)
-                Spacer(minLength: 0)
-            }
+            .frame(minWidth: 250, idealWidth: 290, maxWidth: 330)
 
-            if model.showingLauncherNote, let note = model.selectedLauncherNote {
+            Divider()
+
+            if let note = model.selectedLauncherNote {
                 VStack(spacing: 0) {
                     HStack(spacing: 10) {
                         Image(systemName: "note.text")
                         Text(note.title).font(.headline).lineLimit(1)
                         Spacer()
-                        Button { model.closeLauncherNote() } label: { Image(systemName: "xmark.circle.fill") }
-                            .buttonStyle(.plain).foregroundStyle(.secondary)
+                        Text("⌘B  Bold   ⌘I  Italic   ⌘U  Underline")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                     }
                     .padding(.horizontal, 18).frame(height: 52)
 
-                    RichHTMLView(fragment: note.html, theme: .paperWhite, findText: model.query) { html in
+                    Divider()
+
+                    RichHTMLView(fragment: note.html, theme: .paperWhite, findText: model.query, scrollable: true) { html in
                         model.updateSavedNote(id: note.id, html: html)
                     }
-                    .padding(20)
-                    .frame(maxHeight: .infinity, alignment: .top)
+                    .padding(18)
                 }
                 .foregroundStyle(Color(red: 0.10, green: 0.13, blue: 0.18))
-                .frame(width: 420)
-                .frame(maxHeight: 440, alignment: .top)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .background(Color.white)
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                .overlay { RoundedRectangle(cornerRadius: 22).stroke(Color.black.opacity(0.10)) }
-                .shadow(color: .black.opacity(0.22), radius: 24, x: -8)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 18)
-                .transition(.move(edge: .trailing).combined(with: .opacity))
+                .id(note.id)
+            } else {
+                EmptyStateView(title: "Select a note", systemImage: "note.text", description: "Choose a note from the list to view and edit it.")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .animation(.easeOut(duration: 0.20), value: model.showingLauncherNote)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onDisappear { model.saveNotesOnExit() }
         .clipped()
     }
 
@@ -500,33 +576,34 @@ struct LauncherView: View {
 
     private var googleSearch: some View {
         Group {
-            if let url = model.googleSearchURL {
-                VStack(spacing: 0) {
-                    HStack {
-                        Text("Google results").font(.subheadline.weight(.semibold))
-                        Spacer()
-                        Button { NSWorkspace.shared.open(url) } label: {
-                            Label("Open in Browser", systemImage: "arrow.up.right.square")
+            if model.isSearchingWeb {
+                EmptyStateView(title: "Searching Google API…", systemImage: "globe", description: "Retrieving results without opening Google Search.")
+            } else if !model.webResults.isEmpty {
+                ScrollView {
+                    LazyVStack(spacing: 4) {
+                        ForEach(model.webResults) { result in
+                            Button { NSWorkspace.shared.open(result.url) } label: {
+                                WebResultRow(result: result, selected: false).environmentObject(model)
+                            }.buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
-                    .padding(.horizontal, 16)
-                    .frame(height: 38)
-
-                    EmbeddedWebView(url: url)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(10)
                 }
-                .padding(.horizontal, 12)
-                .padding(.bottom, 12)
             } else {
-                EmptyStateView(title: "Search Google", systemImage: "globe", description: "Type above and press Return to view results here.")
+                EmptyStateView(title: "Search Google API", systemImage: "globe", description: "Add the API key and Search Engine ID in Settings → Web Search, then type above and press Return.")
             }
         }
     }
 
     private var imageSearch: some View {
         ZStack {
-            if model.imageSearchFailed, let url = model.imageSearchURL {
+            if model.imageSearchFailed, model.imageSearchURL == nil {
+                EmptyStateView(
+                    title: "Google Image API unavailable",
+                    systemImage: "photo.badge.exclamationmark",
+                    description: model.errorMessage ?? "Check the API key and Search Engine ID in Settings → Web Search."
+                )
+            } else if model.imageSearchFailed, let url = model.imageSearchURL {
                 VStack(spacing: 14) {
                     EmptyStateView(
                         title: "Images could not load",
@@ -542,8 +619,8 @@ struct LauncherView: View {
             } else if model.imageResults.isEmpty, let url = model.imageSearchURL {
                 GoogleImageGalleryLoader(
                     url: url,
-                    onResults: { _ in },
-                    onFailure: {}
+                    onResults: { model.acceptGoogleImageURLs($0, sourceURL: url) },
+                    onFailure: { model.markGoogleImageSearchFailed(sourceURL: url) }
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(12)
@@ -608,6 +685,9 @@ struct LauncherView: View {
             else { model.switchToAI() }
         } else if model.mode == .files {
             if !model.performAlfredStyleAction() { model.performPrimaryFileAction() }
+        }
+        else if model.mode == .browser {
+            model.activateBrowserSelection()
         }
         else if model.mode == .notes {
             return
@@ -1399,14 +1479,15 @@ private struct RichHTMLView: View {
     let theme: LauncherTheme
     var fontSize: Double = 14
     var findText: String = ""
+    var scrollable = false
     var onSelectionChange: (String) -> Void = { _ in }
     let onChange: (String) -> Void
     @State private var contentHeight: CGFloat = 60
 
     var body: some View {
-        HTMLWebView(fragment: fragment, theme: theme, fontSize: fontSize, findText: findText, contentHeight: $contentHeight, onSelectionChange: onSelectionChange, onChange: onChange)
-            .frame(maxWidth: .infinity)
-            .frame(height: contentHeight)
+        HTMLWebView(fragment: fragment, theme: theme, fontSize: fontSize, findText: findText, scrollable: scrollable, contentHeight: $contentHeight, onSelectionChange: onSelectionChange, onChange: onChange)
+            .frame(maxWidth: .infinity, maxHeight: scrollable ? .infinity : nil)
+            .frame(height: scrollable ? nil : contentHeight)
     }
 }
 
@@ -1415,6 +1496,7 @@ private struct HTMLWebView: NSViewRepresentable {
     let theme: LauncherTheme
     let fontSize: Double
     let findText: String
+    let scrollable: Bool
     @Binding var contentHeight: CGFloat
     let onSelectionChange: (String) -> Void
     let onChange: (String) -> Void
@@ -1433,17 +1515,32 @@ private struct HTMLWebView: NSViewRepresentable {
         document.addEventListener('selectionchange', function() {
           window.webkit.messageHandlers.selectionChanged.postMessage(window.getSelection().toString());
         });
+        document.addEventListener('paste', function() {
+          requestAnimationFrame(function() {
+            window.webkit.messageHandlers.contentChanged.postMessage(document.body.innerHTML);
+          });
+        });
         document.addEventListener('keydown', function(event) {
-          if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+          if (!(event.metaKey || event.ctrlKey)) return;
           const key = event.key.toLowerCase();
-          if (key === 'b' || key === 'i') {
+          if (key === 'b' || key === 'i' || key === 'u') {
             event.preventDefault();
-            document.execCommand(key === 'b' ? 'bold' : 'italic', false, null);
+            document.execCommand(key === 'b' ? 'bold' : (key === 'i' ? 'italic' : 'underline'), false, null);
+            window.webkit.messageHandlers.contentChanged.postMessage(document.body.innerHTML);
+          } else if (event.shiftKey && (key === '7' || key === '8')) {
+            event.preventDefault();
+            document.execCommand(key === '7' ? 'insertOrderedList' : 'insertUnorderedList', false, null);
+            window.webkit.messageHandlers.contentChanged.postMessage(document.body.innerHTML);
+          } else if (event.altKey && (key === '1' || key === '2' || key === '3')) {
+            event.preventDefault();
+            document.execCommand('formatBlock', false, 'h' + key);
             window.webkit.messageHandlers.contentChanged.postMessage(document.body.innerHTML);
           }
         });
         """, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
-        let webView = PassthroughScrollWebView(frame: .zero, configuration: configuration)
+        let webView: WKWebView = scrollable
+            ? WKWebView(frame: .zero, configuration: configuration)
+            : PassthroughScrollWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.setValue(false, forKey: "drawsBackground")
         return webView
@@ -1461,7 +1558,7 @@ private struct HTMLWebView: NSViewRepresentable {
         <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">
         <meta name="color-scheme" content="light">
         <style>
-        *{box-sizing:border-box;max-width:100%} html,body{width:100%;max-width:100%} body{margin:0;color:\(theme.htmlText);background:transparent;font:\(fontSize)px -apple-system,BlinkMacSystemFont,sans-serif;line-height:1.48;overflow:hidden;overflow-wrap:anywhere;word-break:normal;cursor:text;outline:none;min-height:30px}
+        *{box-sizing:border-box;max-width:100%} html,body{width:100%;max-width:100%;min-height:100%} body{margin:0;padding:2px 2px \(scrollable ? "180px" : "2px");color:\(theme.htmlText);background:transparent;font:\(fontSize)px -apple-system,BlinkMacSystemFont,sans-serif;line-height:1.48;overflow-x:hidden;overflow-y:\(scrollable ? "auto" : "hidden");overflow-wrap:anywhere;word-break:normal;cursor:text;outline:none;min-height:100%}
         p{margin:0 0 9px} p:last-child{margin-bottom:0} strong{font-weight:700;color:\(theme.htmlHeading)}
         ul,ol{margin:5px 0 9px;padding-left:21px} li{margin:3px 0}
         table{width:100%;table-layout:fixed;border-collapse:collapse;margin:8px 0;font-size:.93em} th{background:#eef2ff;font-weight:700;text-align:left} th,td{border:1px solid #dbe1ea;padding:6px 8px;vertical-align:top;overflow-wrap:anywhere} img,video{display:block;max-width:100%;height:auto}
@@ -1625,6 +1722,9 @@ private struct WebResultRow: View {
                 }
                 .frame(width: 42, height: 42).clipped()
                 .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            } else if result.engineID == "google_drive_folder" {
+                Image(nsImage: NSWorkspace.shared.icon(forFileType: "public.folder"))
+                    .resizable().scaledToFit().frame(width: 38, height: 38)
             } else {
                 Image(systemName: resultIcon)
                     .font(.system(size: 25)).frame(width: 38)
@@ -1785,6 +1885,44 @@ private struct FileListThumbnail: View {
     }
 }
 
+private struct SystemResultRow: View {
+    @EnvironmentObject private var model: AppModel
+    let result: SystemSearchResult
+    let selected: Bool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.title3)
+                .frame(width: 38, height: 38)
+                .background(model.settings.theme.cardSurface)
+                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(result.title).fontWeight(.medium).lineLimit(1)
+                Text("\(result.category) | \(result.subtitle)")
+                    .font(.subheadline).foregroundStyle(model.settings.theme.secondaryText).lineLimit(1)
+            }
+            Spacer()
+            if selected { Image(systemName: "return").foregroundStyle(.secondary) }
+        }
+        .padding(.horizontal, 18).frame(height: 66)
+        .background(selected ? model.settings.theme.selection : .clear)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private var icon: String {
+        switch result.category {
+        case "Message": return "message.fill"
+        case "Contact": return "person.crop.circle.fill"
+        case "Event": return "calendar"
+        case "Reminder": return "checklist"
+        case "Bookmark": return "bookmark.fill"
+        case "System Setting": return "gearshape.fill"
+        default: return "magnifyingglass"
+        }
+    }
+}
+
 extension LauncherTheme {
     var background: Color {
         switch self {
@@ -1816,12 +1954,131 @@ extension LauncherTheme {
     }
 }
 
+private struct SettingsFolderBrowser: View {
+    @Binding var starredFolders: [String]
+    @State private var columns: [URL] = [FileManager.default.homeDirectoryForCurrentUser]
+
+    var body: some View {
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Locations").font(.headline).padding(.horizontal, 10).padding(.bottom, 4)
+                ForEach(BrowserLocation.available) { location in
+                    Button { columns = [location.url] } label: {
+                        HStack(spacing: 8) {
+                            Image(nsImage: location.icon).resizable().scaledToFit().frame(width: 20, height: 20)
+                            Text(location.name).lineLimit(1)
+                        }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).frame(height: 34)
+                    }.buttonStyle(.plain)
+                }
+                Spacer()
+            }
+            .padding(.vertical, 10).frame(width: 170)
+            Divider()
+
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal) {
+                    HStack(spacing: 0) {
+                        ForEach(Array(columns.enumerated()), id: \.element.path) { columnIndex, folder in
+                        ScrollView {
+                            LazyVStack(spacing: 2) {
+                                Text(folder.lastPathComponent).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading).padding(8)
+                                ForEach(folderChildren(folder), id: \.path) { child in
+                                    HStack(spacing: 8) {
+                                        Button {
+                                            columns = Array(columns.prefix(columnIndex + 1)) + [child]
+                                        } label: {
+                                            HStack(spacing: 8) {
+                                                Image(nsImage: NSWorkspace.shared.icon(forFile: child.path)).resizable().scaledToFit().frame(width: 20, height: 20)
+                                                Text(child.lastPathComponent).lineLimit(1)
+                                                Spacer()
+                                                Image(systemName: "chevron.right").font(.caption)
+                                            }.contentShape(Rectangle())
+                                        }.buttonStyle(.plain)
+                                        Button { toggleStar(child) } label: {
+                                            Image(systemName: starredFolders.contains(child.standardizedFileURL.path) ? "star.fill" : "star")
+                                                .foregroundStyle(starredFolders.contains(child.standardizedFileURL.path) ? .yellow : .secondary)
+                                        }.buttonStyle(.plain)
+                                    }
+                                    .padding(.horizontal, 8).frame(height: 34)
+                                }
+                            }.padding(6)
+                        }
+                        .frame(width: 230)
+                        .id("settings-browser-column-\(columnIndex)")
+                        Divider()
+                    }
+                }
+            }
+                .onChange(of: columns.count) { count in
+                    guard count > 0 else { return }
+                    withAnimation(.easeOut(duration: 0.16)) {
+                        proxy.scrollTo("settings-browser-column-\(count - 1)", anchor: .trailing)
+                    }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Starred Folders").font(.headline).padding(.bottom, 4)
+                if starredFolders.isEmpty {
+                    Text("Click a star beside any folder.").font(.caption).foregroundStyle(.secondary)
+                }
+                ForEach(Array(starredFolders.enumerated()), id: \.element) { index, path in
+                    HStack {
+                        Image(nsImage: NSWorkspace.shared.icon(forFile: path)).resizable().scaledToFit().frame(width: 20, height: 20)
+                        Text(URL(fileURLWithPath: path).lastPathComponent).lineLimit(1)
+                        Spacer()
+                        Button { moveStarredFolder(from: index, by: -1) } label: {
+                            Image(systemName: "chevron.up").foregroundStyle(index == 0 ? .tertiary : .secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(index == 0)
+                        .help("Move up")
+                        Button { moveStarredFolder(from: index, by: 1) } label: {
+                            Image(systemName: "chevron.down").foregroundStyle(index == starredFolders.count - 1 ? .tertiary : .secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(index == starredFolders.count - 1)
+                        .help("Move down")
+                        Button { starredFolders.removeAll { $0 == path } } label: {
+                            Image(systemName: "star.slash").foregroundStyle(.secondary)
+                        }.buttonStyle(.plain)
+                    }.padding(.vertical, 5)
+                }
+                Spacer()
+            }
+            .padding(14).frame(width: 240, alignment: .topLeading)
+            .background(Color(nsColor: NSColor(calibratedWhite: 0.94, alpha: 1)))
+        }
+    }
+
+    private func folderChildren(_ folder: URL) -> [URL] {
+        ((try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isDirectoryKey, .isHiddenKey], options: [.skipsHiddenFiles])) ?? [])
+            .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true && $0.pathExtension.lowercased() != "app" }
+            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+    }
+
+    private func toggleStar(_ folder: URL) {
+        let path = folder.standardizedFileURL.path
+        if starredFolders.contains(path) { starredFolders.removeAll { $0 == path } }
+        else { starredFolders.append(path) }
+    }
+
+    private func moveStarredFolder(from index: Int, by offset: Int) {
+        let destination = index + offset
+        guard starredFolders.indices.contains(index), starredFolders.indices.contains(destination) else { return }
+        starredFolders.swapAt(index, destination)
+    }
+}
+
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
     @State private var provider: AIProvider = .openAI
     @State private var shortcut: Shortcut = .optionSpace
     @State private var openAIKey = ""
     @State private var geminiKey = ""
+    @State private var googleSearchAPIKey = ""
+    @State private var googleSearchEngineID = ""
     @State private var includedExtensions = ""
     @State private var excludedExtensions = ""
     @State private var includedKinds: Set<String> = []
@@ -1833,6 +2090,7 @@ struct SettingsView: View {
     @State private var transparency = 0.90
     @State private var keySaveTask: Task<Void, Never>?
     @State private var webEngines: [WebSearchEngine] = WebSearchEngine.defaults
+    @State private var starredFolders: [String] = []
 
     var body: some View {
         TabView {
@@ -1842,6 +2100,8 @@ struct SettingsView: View {
                 .tabItem { Label("Themes", systemImage: "paintpalette") }
             webSearchSettings
                 .tabItem { Label("Web Search", systemImage: "globe") }
+            browserSettings
+                .tabItem { Label("Browser", systemImage: "folder") }
         }
         .padding(.top, 8)
         .onAppear {
@@ -1861,7 +2121,10 @@ struct SettingsView: View {
         .onChange(of: transparency) { _ in save(includeKeys: false) }
         .onChange(of: openAIKey) { _ in scheduleKeySave() }
         .onChange(of: geminiKey) { _ in scheduleKeySave() }
+        .onChange(of: googleSearchAPIKey) { _ in scheduleKeySave() }
+        .onChange(of: googleSearchEngineID) { _ in save(includeKeys: false) }
         .onChange(of: webEngines) { _ in save(includeKeys: false) }
+        .onChange(of: starredFolders) { _ in save(includeKeys: false) }
     }
 
     private var generalSettings: some View {
@@ -1969,6 +2232,12 @@ struct SettingsView: View {
 
     private var webSearchSettings: some View {
         Form {
+            Section("Google Custom Search API") {
+                SecureField("API key", text: $googleSearchAPIKey)
+                TextField("Programmable Search Engine ID (cx)", text: $googleSearchEngineID)
+                Text("Used for native web and image results without loading google.com or triggering CAPTCHA. Google has closed this API to new customers; these fields require an existing enabled project.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section("Search engines") {
                 Text("Type a shortcut, a space, then your search. Example: yt chest tube procedure")
                     .font(.caption).foregroundStyle(.secondary)
@@ -1994,11 +2263,18 @@ struct SettingsView: View {
         .formStyle(.grouped)
     }
 
+    private var browserSettings: some View {
+        SettingsFolderBrowser(starredFolders: $starredFolders)
+            .padding(12)
+    }
+
     private func loadSettings() {
         provider = model.settings.provider
         shortcut = model.settings.shortcut
         openAIKey = model.settings.openAIKey
         geminiKey = model.settings.geminiKey
+        googleSearchAPIKey = model.settings.googleSearchAPIKey
+        googleSearchEngineID = model.settings.googleSearchEngineID
         includedExtensions = model.settings.includedExtensions.joined(separator: ", ")
         excludedExtensions = model.settings.excludedExtensions.joined(separator: ", ")
         includedKinds = Set(model.settings.includedKinds)
@@ -2008,6 +2284,7 @@ struct SettingsView: View {
         theme = model.settings.theme
         transparency = model.settings.transparency
         webEngines = model.settings.webEngines
+        starredFolders = model.settings.starredFolders
     }
 
     private func save(includeKeys: Bool) {
@@ -2015,10 +2292,13 @@ struct SettingsView: View {
         let shortcutChanged = model.settings.shortcut != shortcut
         let launchAtLoginChanged = model.settings.launchAtLogin != launchAtLogin
         model.settings.provider = provider
+        model.settings.starredFolders = starredFolders
+        model.settings.googleSearchEngineID = googleSearchEngineID
         model.settings.shortcut = shortcut
         if includeKeys {
             model.settings.openAIKey = openAIKey
             model.settings.geminiKey = geminiKey
+            model.settings.googleSearchAPIKey = googleSearchAPIKey
         }
         model.settings.includedExtensions = parseExtensions(includedExtensions)
         model.settings.excludedExtensions = parseExtensions(excludedExtensions)
