@@ -1029,9 +1029,9 @@ final class AppModel: ObservableObject {
         else {
             let openURL: URL
             if item.isGoogleDriveItem && item.isMediaFile {
-                // Opening the DriveFS path asks File Provider to materialize the
-                // cloud-only item, then macOS routes it to the default media app.
-                openURL = item.url
+                materializeAndOpenGoogleDriveMedia(item.url)
+                NSApp.keyWindow?.orderOut(nil)
+                return
             } else {
                 openURL = FileManager.default.fileExists(atPath: item.url.path) ? item.url : (item.remoteURL ?? item.url)
             }
@@ -1689,13 +1689,56 @@ final class AppModel: ObservableObject {
         let mediaExtensions = Set(["png", "jpg", "jpeg", "gif", "heic", "tif", "tiff", "svg", "webp", "mov", "mp4", "m4v", "avi", "mkv", "webm", "mp3", "m4a", "wav", "aac", "flac", "aiff"])
         let isMedia = mediaExtensions.contains((result.title as NSString).pathExtension.lowercased())
         guard let localURL = googleDriveLocalURL(for: result, allowCloudOnly: isMedia) else {
-            errorMessage = "Google Drive has not exposed this item to Finder yet. Opening its Drive link instead."
-            NSWorkspace.shared.open(result.url)
+            if isMedia {
+                errorMessage = "Google Drive has not exposed a local path for this media file yet."
+            } else {
+                errorMessage = "Google Drive has not exposed this item to Finder yet. Opening its Drive link instead."
+                NSWorkspace.shared.open(result.url)
+            }
+            return
+        }
+        if isMedia {
+            materializeAndOpenGoogleDriveMedia(localURL)
             return
         }
         // Opening a File Provider placeholder asks DriveFS to download it,
         // then macOS launches the registered default application.
         NSWorkspace.shared.open(localURL)
+    }
+
+    private func materializeAndOpenGoogleDriveMedia(_ url: URL) {
+        guard !isDownloading else { return }
+        isDownloading = true
+        Task { [weak self] in
+            let outcome = await Task.detached(priority: .userInitiated) { () -> (URL?, String?) in
+                var coordinatorError: NSError?
+                var readError: Error?
+                var materializedURL: URL?
+                let coordinator = NSFileCoordinator()
+                coordinator.coordinate(readingItemAt: url, options: [], error: &coordinatorError) { coordinatedURL in
+                    do {
+                        let handle = try FileHandle(forReadingFrom: coordinatedURL)
+                        _ = try handle.read(upToCount: 1)
+                        try handle.close()
+                        materializedURL = coordinatedURL
+                    } catch {
+                        readError = error
+                    }
+                }
+                let message = coordinatorError?.localizedDescription ?? readError?.localizedDescription
+                return (materializedURL, message)
+            }.value
+            guard let self else { return }
+            self.isDownloading = false
+            guard let localURL = outcome.0 else {
+                self.errorMessage = "Google Drive could not download this media file: \(outcome.1 ?? "Unknown error")"
+                return
+            }
+            guard NSWorkspace.shared.open(localURL) else {
+                self.errorMessage = "macOS could not open this media file in its default application."
+                return
+            }
+        }
     }
 
     func focusGoogleDriveFolder(_ result: WebSearchResult) {
