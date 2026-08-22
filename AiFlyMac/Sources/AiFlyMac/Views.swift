@@ -36,9 +36,13 @@ struct LauncherView: View {
                     }
                     if model.isWorking || model.isSearchingFiles || model.isSearchingWeb { ProgressView().controlSize(.small) }
                     Button { showingQuickMenu.toggle() } label: {
-                        Image(systemName: "ellipsis").font(.system(size: 16, weight: .semibold))
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 16, weight: .semibold))
+                            .frame(width: 36, height: 36)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .contentShape(Rectangle())
                     .help("Options")
                     .popover(isPresented: $showingQuickMenu, arrowEdge: .top) {
                         QuickOptionsMenu(isPresented: $showingQuickMenu)
@@ -482,7 +486,7 @@ struct LauncherView: View {
 
                     Divider()
 
-                    RichHTMLView(fragment: note.html, theme: .paperWhite, findText: model.query, scrollable: true) { html in
+                    RichHTMLView(fragment: note.html, theme: .paperWhite, findText: model.query, findGeneration: model.noteFindGeneration, scrollable: true) { html in
                         model.updateSavedNote(id: note.id, html: html)
                     }
                     .padding(18)
@@ -583,14 +587,18 @@ struct LauncherView: View {
                     LazyVStack(spacing: 4) {
                         ForEach(model.webResults) { result in
                             Button { NSWorkspace.shared.open(result.url) } label: {
-                                WebResultRow(result: result, selected: false).environmentObject(model)
+                                GoogleNativeResultRow(result: result).environmentObject(model)
                             }.buttonStyle(.plain)
                         }
                     }
                     .padding(10)
                 }
             } else {
-                EmptyStateView(title: "Search Google API", systemImage: "globe", description: "Add the API key and Search Engine ID in Settings → Web Search, then type above and press Return.")
+                EmptyStateView(
+                    title: "Search Google API",
+                    systemImage: "globe",
+                    description: model.errorMessage ?? "Enter a search above and press Return. AiFly can use its no-key web fallback."
+                )
             }
         }
     }
@@ -690,7 +698,7 @@ struct LauncherView: View {
             model.activateBrowserSelection()
         }
         else if model.mode == .notes {
-            return
+            model.advanceNoteFind()
         } else if model.mode == .google {
             model.submitGoogleSearch()
         } else if model.mode == .images {
@@ -702,6 +710,141 @@ struct LauncherView: View {
         }
     }
 
+}
+
+private struct GoogleNativeResultRow: View {
+    @EnvironmentObject private var model: AppModel
+    let result: WebSearchResult
+
+    var body: some View {
+        if result.engineID == "google_ai" || result.engineID == "google_featured" {
+            aiOverviewCard
+        } else if result.engineID == "google_ai_source" {
+            aiSourceRow
+        } else if result.engineID == "google_knowledge" {
+            knowledgeCard
+        } else if result.engineID == "google_answer" {
+            answerCard
+        } else {
+            organicResult
+        }
+    }
+
+    private var aiOverviewCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles").foregroundStyle(Color(red: 0.32, green: 0.43, blue: 0.94))
+                Text(result.engineID == "google_ai" ? "Google AI Overview" : "Google featured answer")
+                    .font(.headline)
+                Spacer()
+            }
+            Text(result.subtitle)
+                .font(.system(size: 14.5)).lineSpacing(3)
+                .multilineTextAlignment(.leading).lineLimit(14)
+            Text("Open source")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color(red: 0.20, green: 0.43, blue: 0.88))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading).padding(17)
+        .background(
+            LinearGradient(
+                colors: [Color.blue.opacity(0.12), Color.purple.opacity(0.08)],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            )
+        )
+        .overlay { RoundedRectangle(cornerRadius: 16).stroke(Color.blue.opacity(0.18)) }
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .contentShape(Rectangle())
+    }
+
+    private var aiSourceRow: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "link.circle.fill").foregroundStyle(Color.blue)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(result.title).font(.subheadline.weight(.semibold)).lineLimit(2)
+                Text(result.subtitle).font(.caption).foregroundStyle(model.settings.theme.secondaryText).lineLimit(1)
+            }
+            Spacer()
+            Image(systemName: "arrow.up.right").font(.caption).foregroundStyle(model.settings.theme.secondaryText)
+        }
+        .padding(.horizontal, 17).padding(.vertical, 9)
+        .contentShape(Rectangle())
+    }
+
+    private var organicResult: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                AsyncImage(url: faviconURL) { phase in
+                    if let image = phase.image { image.resizable().scaledToFit() }
+                    else { Image(systemName: "globe").foregroundStyle(.secondary) }
+                }
+                .frame(width: 22, height: 22)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(displayHost).font(.subheadline.weight(.medium)).foregroundStyle(model.settings.theme.primaryText)
+                    Text(result.url.absoluteString).font(.caption2).foregroundStyle(model.settings.theme.secondaryText).lineLimit(1)
+                }
+            }
+            Text(result.title)
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(Color(red: 0.20, green: 0.43, blue: 0.88))
+                .multilineTextAlignment(.leading).lineLimit(2)
+            Text(result.subtitle)
+                .font(.subheadline).foregroundStyle(model.settings.theme.primaryText.opacity(0.82))
+                .multilineTextAlignment(.leading).lineLimit(3)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16).padding(.vertical, 13)
+        .contentShape(Rectangle())
+    }
+
+    private var knowledgeCard: some View {
+        HStack(alignment: .top, spacing: 14) {
+            if let imageURL = result.thumbnailURL {
+                AsyncImage(url: imageURL) { phase in
+                    if let image = phase.image { image.resizable().scaledToFill() }
+                    else { Color.clear }
+                }
+                .frame(width: 92, height: 92).clipped()
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Knowledge panel").font(.caption.weight(.semibold)).foregroundStyle(model.settings.theme.secondaryText)
+                Text(result.title).font(.title2.weight(.semibold)).multilineTextAlignment(.leading)
+                Text(result.subtitle).font(.subheadline).lineLimit(5).multilineTextAlignment(.leading)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading).padding(16)
+        .background(model.settings.theme.cardSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+        .contentShape(Rectangle())
+    }
+
+    private var answerCard: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("People also ask").font(.caption.weight(.semibold)).foregroundStyle(model.settings.theme.secondaryText)
+            HStack(alignment: .top) {
+                Text(result.title).font(.headline).multilineTextAlignment(.leading)
+                Spacer()
+                Image(systemName: "chevron.right").font(.caption).foregroundStyle(model.settings.theme.secondaryText)
+            }
+            Text(result.subtitle).font(.subheadline).foregroundStyle(model.settings.theme.secondaryText).lineLimit(3).multilineTextAlignment(.leading)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading).padding(14)
+        .background(model.settings.theme.cardSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+        .contentShape(Rectangle())
+    }
+
+    private var displayHost: String {
+        (result.url.host ?? "Google result").replacingOccurrences(of: "www.", with: "")
+    }
+
+    private var faviconURL: URL? {
+        guard let host = result.url.host else { return nil }
+        var components = URLComponents(string: "https://www.google.com/s2/favicons")
+        components?.queryItems = [URLQueryItem(name: "domain", value: host), URLQueryItem(name: "sz", value: "64")]
+        return components?.url
+    }
 }
 
 private struct ImageGalleryTile: View {
@@ -1479,13 +1622,14 @@ private struct RichHTMLView: View {
     let theme: LauncherTheme
     var fontSize: Double = 14
     var findText: String = ""
+    var findGeneration = 0
     var scrollable = false
     var onSelectionChange: (String) -> Void = { _ in }
     let onChange: (String) -> Void
     @State private var contentHeight: CGFloat = 60
 
     var body: some View {
-        HTMLWebView(fragment: fragment, theme: theme, fontSize: fontSize, findText: findText, scrollable: scrollable, contentHeight: $contentHeight, onSelectionChange: onSelectionChange, onChange: onChange)
+        HTMLWebView(fragment: fragment, theme: theme, fontSize: fontSize, findText: findText, findGeneration: findGeneration, scrollable: scrollable, contentHeight: $contentHeight, onSelectionChange: onSelectionChange, onChange: onChange)
             .frame(maxWidth: .infinity, maxHeight: scrollable ? .infinity : nil)
             .frame(height: scrollable ? nil : contentHeight)
     }
@@ -1496,6 +1640,7 @@ private struct HTMLWebView: NSViewRepresentable {
     let theme: LauncherTheme
     let fontSize: Double
     let findText: String
+    let findGeneration: Int
     let scrollable: Bool
     @Binding var contentHeight: CGFloat
     let onSelectionChange: (String) -> Void
@@ -1563,6 +1708,7 @@ private struct HTMLWebView: NSViewRepresentable {
         ul,ol{margin:5px 0 9px;padding-left:21px} li{margin:3px 0}
         table{width:100%;table-layout:fixed;border-collapse:collapse;margin:8px 0;font-size:.93em} th{background:#eef2ff;font-weight:700;text-align:left} th,td{border:1px solid #dbe1ea;padding:6px 8px;vertical-align:top;overflow-wrap:anywhere} img,video{display:block;max-width:100%;height:auto}
         h1,h2,h3{font-size:15px;margin:10px 0 5px;color:\(theme.htmlHeading)} a{color:#2563eb}
+        ::highlight(note-find){background:#dbeafe;color:inherit} ::highlight(note-find-active){background:#93c5fd;color:inherit}
         </style></head><body contenteditable="true" spellcheck="true">\(cleanFragment)</body></html>
         """
             webView.loadHTMLString(document, baseURL: nil)
@@ -1577,6 +1723,10 @@ private struct HTMLWebView: NSViewRepresentable {
             context.coordinator.findText = findText
             context.coordinator.find(findText, in: webView)
         }
+        if context.coordinator.findGeneration != findGeneration {
+            context.coordinator.findGeneration = findGeneration
+            context.coordinator.advanceFind(in: webView)
+        }
     }
 
     static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
@@ -1589,6 +1739,7 @@ private struct HTMLWebView: NSViewRepresentable {
         var loadedFragment: String?
         var loadedFontSize: Double?
         var findText = ""
+        var findGeneration = 0
         let onChange: (String) -> Void
         let onSelectionChange: (String) -> Void
 
@@ -1611,11 +1762,57 @@ private struct HTMLWebView: NSViewRepresentable {
         }
 
         func find(_ text: String, in webView: WKWebView) {
-            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                  let data = try? JSONSerialization.data(withJSONObject: [text]),
+            guard let data = try? JSONSerialization.data(withJSONObject: [text]),
                   let json = String(data: data, encoding: .utf8) else { return }
             let argument = String(json.dropFirst().dropLast())
-            webView.evaluateJavaScript("window.getSelection().removeAllRanges(); window.find(\(argument), false, false, true, false, true, false);")
+            webView.evaluateJavaScript("""
+            (function(term) {
+              if (!window.CSS || !CSS.highlights || typeof Highlight === 'undefined') {
+                if (term.trim()) window.find(term, false, false, true, false, true, false);
+                return;
+              }
+              CSS.highlights.delete('note-find');
+              CSS.highlights.delete('note-find-active');
+              window.__noteFindRanges = [];
+              window.__noteFindIndex = -1;
+              if (!term.trim()) return;
+              const needle = term.toLocaleLowerCase();
+              const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+              let node;
+              while ((node = walker.nextNode())) {
+                const value = node.nodeValue.toLocaleLowerCase();
+                let start = 0;
+                while ((start = value.indexOf(needle, start)) !== -1) {
+                  const range = new Range();
+                  range.setStart(node, start);
+                  range.setEnd(node, start + term.length);
+                  window.__noteFindRanges.push(range);
+                  start += Math.max(1, term.length);
+                }
+              }
+              CSS.highlights.set('note-find', new Highlight(...window.__noteFindRanges));
+              if (window.__noteFindRanges.length) {
+                window.__noteFindIndex = 0;
+                CSS.highlights.set('note-find-active', new Highlight(window.__noteFindRanges[0]));
+                const rect = window.__noteFindRanges[0].getBoundingClientRect();
+                window.scrollTo({top: Math.max(0, window.scrollY + rect.top - 80), behavior:'smooth'});
+              }
+            })(\(argument));
+            """)
+        }
+
+        func advanceFind(in webView: WKWebView) {
+            webView.evaluateJavaScript("""
+            (function() {
+              const ranges = window.__noteFindRanges || [];
+              if (!ranges.length || !window.CSS || !CSS.highlights) return;
+              window.__noteFindIndex = (window.__noteFindIndex + 1) % ranges.length;
+              const active = ranges[window.__noteFindIndex];
+              CSS.highlights.set('note-find-active', new Highlight(active));
+              const rect = active.getBoundingClientRect();
+              window.scrollTo({top: Math.max(0, window.scrollY + rect.top - 80), behavior:'smooth'});
+            })();
+            """)
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -2079,6 +2276,7 @@ struct SettingsView: View {
     @State private var geminiKey = ""
     @State private var googleSearchAPIKey = ""
     @State private var googleSearchEngineID = ""
+    @State private var serperAPIKey = ""
     @State private var includedExtensions = ""
     @State private var excludedExtensions = ""
     @State private var includedKinds: Set<String> = []
@@ -2122,6 +2320,7 @@ struct SettingsView: View {
         .onChange(of: openAIKey) { _ in scheduleKeySave() }
         .onChange(of: geminiKey) { _ in scheduleKeySave() }
         .onChange(of: googleSearchAPIKey) { _ in scheduleKeySave() }
+        .onChange(of: serperAPIKey) { _ in scheduleKeySave() }
         .onChange(of: googleSearchEngineID) { _ in save(includeKeys: false) }
         .onChange(of: webEngines) { _ in save(includeKeys: false) }
         .onChange(of: starredFolders) { _ in save(includeKeys: false) }
@@ -2232,6 +2431,12 @@ struct SettingsView: View {
 
     private var webSearchSettings: some View {
         Form {
+            Section("Serper — Recommended") {
+                SecureField("Serper API key", text: $serperAPIKey)
+                Link("Create or view your Serper key", destination: URL(string: "https://serper.dev/")!)
+                Text("Provides native Google web and image results. AiFly uses no-key fallbacks when this is blank. Stored in macOS Keychain.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section("Google Custom Search API") {
                 SecureField("API key", text: $googleSearchAPIKey)
                 TextField("Programmable Search Engine ID (cx)", text: $googleSearchEngineID)
@@ -2275,6 +2480,7 @@ struct SettingsView: View {
         geminiKey = model.settings.geminiKey
         googleSearchAPIKey = model.settings.googleSearchAPIKey
         googleSearchEngineID = model.settings.googleSearchEngineID
+        serperAPIKey = model.settings.serperAPIKey
         includedExtensions = model.settings.includedExtensions.joined(separator: ", ")
         excludedExtensions = model.settings.excludedExtensions.joined(separator: ", ")
         includedKinds = Set(model.settings.includedKinds)
@@ -2299,6 +2505,7 @@ struct SettingsView: View {
             model.settings.openAIKey = openAIKey
             model.settings.geminiKey = geminiKey
             model.settings.googleSearchAPIKey = googleSearchAPIKey
+            model.settings.serperAPIKey = serperAPIKey
         }
         model.settings.includedExtensions = parseExtensions(includedExtensions)
         model.settings.excludedExtensions = parseExtensions(excludedExtensions)

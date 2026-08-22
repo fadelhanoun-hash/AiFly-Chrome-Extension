@@ -10,13 +10,15 @@ enum WebSearchService {
         case api(String)
         var errorDescription: String? {
             switch self {
-            case .missingCredentials: return "Add your Google Custom Search API key and Search Engine ID in Settings → Web Search."
-            case .api(let message): return "Google Search API: \(message)"
+            case .missingCredentials: return "Add a Serper API key in Settings → Web Search."
+            case .api(let message): return "Search API: \(message)"
             }
         }
     }
 
     static func googleCustomSearch(_ term: String, image: Bool, settings: AppSettings) async throws -> [WebSearchResult] {
+        let serperKey = settings.serperAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !serperKey.isEmpty { return try await serperSearch(term, image: image, key: serperKey) }
         let key = settings.googleSearchAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
         let engineID = settings.googleSearchEngineID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty, !engineID.isEmpty else { throw GoogleSearchError.missingCredentials }
@@ -52,9 +54,199 @@ enum WebSearchService {
         }
     }
 
+    private static func serperSearch(_ term: String, image: Bool, key: String) async throws -> [WebSearchResult] {
+        guard let url = URL(string: "https://google.serper.dev/\(image ? "images" : "search")") else {
+            throw GoogleSearchError.api("Invalid Serper request.")
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(key, forHTTPHeaderField: "X-API-KEY")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "q": term, "gl": "us", "hl": "en", "autocorrect": true
+        ])
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw GoogleSearchError.api("Serper returned an unreadable response.")
+        }
+        if let message = payload["message"] as? String { throw GoogleSearchError.api("Serper: \(message)") }
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw GoogleSearchError.api("Serper request failed.")
+        }
+
+        if image {
+            let items = payload["images"] as? [[String: Any]] ?? []
+            return items.prefix(60).compactMap { item in
+                guard let title = item["title"] as? String,
+                      let imageString = (item["imageUrl"] as? String) ?? (item["thumbnailUrl"] as? String),
+                      let imageURL = URL(string: imageString) else { return nil }
+                let pageURL = ((item["link"] as? String).flatMap(URL.init(string:))) ?? imageURL
+                let thumbnailURL = ((item["thumbnailUrl"] as? String).flatMap(URL.init(string:))) ?? imageURL
+                let source = item["source"] as? String ?? (item["domain"] as? String ?? "Google Images via Serper")
+                return WebSearchResult(
+                    id: "serper-image|\(imageString)", engineID: "images", title: title,
+                    subtitle: source, url: pageURL, thumbnailURL: thumbnailURL, isFallback: false
+                )
+            }
+        }
+
+        var results: [WebSearchResult] = []
+        if let overview = payload["aiOverview"],
+           let overviewText = aiText(from: overview), !overviewText.isEmpty {
+            let sourceItems = aiSources(from: overview)
+            let overviewURL = sourceItems.first?.url ?? googleSearchURL(for: term)
+            if let overviewURL {
+                results.append(WebSearchResult(
+                    id: "serper-ai-overview|\(term)", engineID: "google_ai", title: "AI Overview",
+                    subtitle: overviewText, url: overviewURL, thumbnailURL: nil, isFallback: false
+                ))
+            }
+            results += sourceItems.prefix(5).map { source in
+                WebSearchResult(
+                    id: "serper-ai-source|\(source.url.absoluteString)", engineID: "google_ai_source",
+                    title: source.title, subtitle: source.url.host ?? "AI Overview source",
+                    url: source.url, thumbnailURL: nil, isFallback: false
+                )
+            }
+        }
+        if let answerBox = payload["answerBox"] as? [String: Any],
+           let answer = aiText(from: answerBox), !answer.isEmpty,
+           let linkString = (answerBox["link"] as? String) ?? (answerBox["source"] as? String),
+           let link = URL(string: linkString) {
+            results.append(WebSearchResult(
+                id: "serper-featured|\(link.absoluteString)", engineID: "google_featured",
+                title: answerBox["title"] as? String ?? "Featured answer", subtitle: answer,
+                url: link, thumbnailURL: nil, isFallback: false
+            ))
+        }
+        if let graph = payload["knowledgeGraph"] as? [String: Any],
+           let title = graph["title"] as? String,
+           let link = (graph["website"] as? String) ?? (graph["descriptionLink"] as? String),
+           let resultURL = URL(string: link) {
+            results.append(WebSearchResult(
+                id: "serper-knowledge|\(link)", engineID: "google_knowledge", title: title,
+                subtitle: graph["description"] as? String ?? (graph["type"] as? String ?? "Google Knowledge Graph"),
+                url: resultURL, thumbnailURL: (graph["imageUrl"] as? String).flatMap(URL.init(string:)), isFallback: false
+            ))
+        }
+
+        let items = payload["organic"] as? [[String: Any]] ?? []
+        results += items.prefix(20).compactMap { item in
+            guard let title = item["title"] as? String,
+                  let link = item["link"] as? String,
+                  let resultURL = URL(string: link) else { return nil }
+            let subtitle = item["snippet"] as? String ?? (resultURL.host ?? "Google result")
+            return WebSearchResult(
+                id: "serper-web|\(link)", engineID: "google", title: title,
+                subtitle: subtitle, url: resultURL, thumbnailURL: nil, isFallback: false
+            )
+        }
+        if let questions = payload["peopleAlsoAsk"] as? [[String: Any]] {
+            results += questions.prefix(5).compactMap { item in
+                guard let question = item["question"] as? String,
+                      let link = item["link"] as? String,
+                      let resultURL = URL(string: link) else { return nil }
+                return WebSearchResult(
+                    id: "serper-answer|\(question)|\(link)", engineID: "google_answer", title: question,
+                    subtitle: item["snippet"] as? String ?? (item["title"] as? String ?? "People also ask"),
+                    url: resultURL, thumbnailURL: nil, isFallback: false
+                )
+            }
+        }
+        return results
+    }
+
+    private static func aiText(from value: Any) -> String? {
+        if let text = value as? String { return text.trimmingCharacters(in: .whitespacesAndNewlines) }
+        guard let object = value as? [String: Any] else { return nil }
+        for key in ["text", "answer", "snippet", "content", "overview"] {
+            if let text = object[key] as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return text.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        for key in ["blocks", "paragraphs", "items"] {
+            guard let values = object[key] as? [Any] else { continue }
+            let text = values.compactMap { aiText(from: $0) }.filter { !$0.isEmpty }.joined(separator: "\n\n")
+            if !text.isEmpty { return text }
+        }
+        return nil
+    }
+
+    private static func aiSources(from value: Any) -> [(title: String, url: URL)] {
+        guard let object = value as? [String: Any] else { return [] }
+        for key in ["sources", "references", "citations"] {
+            guard let values = object[key] as? [[String: Any]] else { continue }
+            let sources = values.compactMap { item -> (String, URL)? in
+                guard let link = (item["link"] as? String) ?? (item["url"] as? String),
+                      let url = URL(string: link) else { return nil }
+                return (item["title"] as? String ?? item["source"] as? String ?? url.host ?? "Source", url)
+            }
+            if !sources.isEmpty { return sources }
+        }
+        return []
+    }
+
+    private static func googleSearchURL(for term: String) -> URL? {
+        var components = URLComponents(string: "https://www.google.com/search")
+        components?.queryItems = [URLQueryItem(name: "q", value: term)]
+        return components?.url
+    }
+
     static func completion(for term: String) async -> String? {
         let values = await suggestions(term, youtube: false)
         return values.first { $0.localizedCaseInsensitiveCompare(term) != .orderedSame }
+    }
+
+    static func webFallback(_ term: String) async -> [WebSearchResult] {
+        guard var components = URLComponents(string: "https://www.bing.com/search") else { return [] }
+        components.queryItems = [
+            URLQueryItem(name: "q", value: term),
+            URLQueryItem(name: "safeSearch", value: "Strict")
+        ]
+        guard let url = components.url else { return [] }
+        var request = URLRequest(url: url)
+        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Safari/605.1.15", forHTTPHeaderField: "User-Agent")
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let html = String(data: data, encoding: .utf8),
+              let regex = try? NSRegularExpression(
+                pattern: #"<li class="b_algo"[\s\S]*?<h2[^>]*><a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)</a></h2>[\s\S]*?(?:<p[^>]*>([\s\S]*?)</p>)?"#,
+                options: [.caseInsensitive]
+              ) else { return [] }
+        let range = NSRange(html.startIndex..<html.endIndex, in: html)
+        var seen = Set<String>()
+        return regex.matches(in: html, range: range).prefix(20).compactMap { match in
+            guard let linkRange = Range(match.range(at: 1), in: html),
+                  let titleRange = Range(match.range(at: 2), in: html) else { return nil }
+            let link = decodeHTML(String(html[linkRange]))
+            guard seen.insert(link).inserted, let resultURL = URL(string: link) else { return nil }
+            let title = plainHTML(String(html[titleRange]))
+            let snippet: String
+            if match.numberOfRanges > 3, match.range(at: 3).location != NSNotFound,
+               let snippetRange = Range(match.range(at: 3), in: html) {
+                snippet = plainHTML(String(html[snippetRange]))
+            } else {
+                snippet = resultURL.host ?? "Web result"
+            }
+            return WebSearchResult(
+                id: "no-key-web|\(link)", engineID: "google", title: title,
+                subtitle: snippet, url: resultURL, thumbnailURL: nil, isFallback: true
+            )
+        }
+    }
+
+    private static func plainHTML(_ value: String) -> String {
+        let withoutTags = value.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+        return decodeHTML(withoutTags).replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func decodeHTML(_ value: String) -> String {
+        value.replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#39;", with: "'")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
     }
 
     static func search(engine: WebSearchEngine, term: String) async -> [WebSearchResult] {

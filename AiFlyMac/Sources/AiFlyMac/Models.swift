@@ -301,6 +301,10 @@ struct AppSettings {
         get { KeychainStore.read("google-search-api-key") ?? "" }
         set { KeychainStore.write(newValue, account: "google-search-api-key") }
     }
+    var serperAPIKey: String {
+        get { KeychainStore.read("serper-api-key") ?? "" }
+        set { KeychainStore.write(newValue, account: "serper-api-key") }
+    }
     var googleSearchEngineID: String {
         get { UserDefaults.standard.string(forKey: "googleSearchEngineID") ?? "" }
         set { UserDefaults.standard.set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "googleSearchEngineID") }
@@ -387,6 +391,7 @@ final class AppModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var savedNotes: [SavedNote] = []
     @Published var noteSearch = ""
+    @Published var noteFindGeneration = 0
     @Published var notePickerMessageID: UUID?
     @Published var lastSavedNoteID: UUID?
     @Published var noteListSelection = 0
@@ -1139,7 +1144,12 @@ final class AppModel: ObservableObject {
                 let matches = try await WebSearchService.googleCustomSearch(term, image: false, settings: settings)
                 guard !Task.isCancelled, mode == .google, query.trimmingCharacters(in: .whitespacesAndNewlines) == term else { return }
                 webResults = matches
-            } catch { errorMessage = error.localizedDescription }
+            } catch {
+                let fallback = await WebSearchService.webFallback(term)
+                guard !Task.isCancelled, mode == .google, query.trimmingCharacters(in: .whitespacesAndNewlines) == term else { return }
+                webResults = fallback
+                errorMessage = fallback.isEmpty ? error.localizedDescription : nil
+            }
             isSearchingWeb = false
         }
     }
@@ -1161,8 +1171,11 @@ final class AppModel: ObservableObject {
                 imageResults = matches
                 imageSearchFailed = matches.isEmpty
             } catch {
-                errorMessage = error.localizedDescription
-                imageSearchFailed = true
+                let fallback = await WebSearchService.googleImages(term)
+                guard !Task.isCancelled, mode == .images, query.trimmingCharacters(in: .whitespacesAndNewlines) == term else { return }
+                imageResults = fallback
+                imageSearchFailed = fallback.isEmpty
+                errorMessage = fallback.isEmpty ? error.localizedDescription : nil
             }
             isSearchingWeb = false
         }
@@ -1192,9 +1205,9 @@ final class AppModel: ObservableObject {
         imageSearchFailed = true
     }
 
-    func acceptQuerySuggestion() {
+    func acceptQuerySuggestion(addTrailingSpace: Bool = false) {
         guard let querySuggestion else { return }
-        query = querySuggestion
+        query = querySuggestion + (addTrailingSpace ? " " : "")
         self.querySuggestion = nil
     }
 
@@ -1878,6 +1891,11 @@ final class AppModel: ObservableObject {
         let count = launcherNotes.count
         noteListSelection = (noteListSelection + offset + count) % count
         NotificationCenter.default.post(name: .noteSelectionChanged, object: nil)
+    }
+
+    func advanceNoteFind() {
+        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        noteFindGeneration &+= 1
     }
 
     func openLauncherNote(at index: Int) {

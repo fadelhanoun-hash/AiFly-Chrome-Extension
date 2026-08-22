@@ -12,6 +12,7 @@ struct AiFlyMacApp: App {
             Button("Open AiFly") { appDelegate.showLauncher() }
             Divider()
             Button("Settings…") { appDelegate.showSettings() }
+                .keyboardShortcut(",", modifiers: .command)
             Button("Quit AiFly") { NSApplication.shared.terminate(nil) }
         }
     }
@@ -36,6 +37,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let self,
                   let launcher = self.launcherWindow,
                   launcher.isKeyWindow else { return event }
+
+            let activeModifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if activeModifiers.contains(.command), event.keyCode == 43 {
+                self.showSettings()
+                return nil
+            }
+            if event.keyCode == 49,
+               activeModifiers.intersection([.command, .option, .control]).isEmpty,
+               launcher.firstResponder is NSTextView,
+               self.model.querySuggestionSuffix != nil {
+                self.model.acceptQuerySuggestion(addTrailingSpace: true)
+                NotificationCenter.default.post(name: .focusLauncher, object: nil)
+                return nil
+            }
 
             if event.keyCode == 53 {
                 if self.model.webDialogResult != nil {
@@ -66,6 +81,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return nil
             }
             let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if self.model.mode == .notes, modifiers.contains(.command), event.keyCode == 3 {
+                NotificationCenter.default.post(name: .focusLauncher, object: nil)
+                return nil
+            }
             let editingSearchField = launcher.firstResponder is NSTextView
             let isHorizontalArrow = event.keyCode == 123 || event.keyCode == 124
             let isModifiedArrow = [123, 124, 125, 126].contains(event.keyCode)
@@ -271,7 +290,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 backing: .buffered,
                 defer: false
             )
+            window.identifier = NSUserInterfaceItemIdentifier("settings")
             window.title = "AiFly Settings"
+            window.delegate = self
             window.contentView = NSHostingView(rootView: settingsView)
             window.isReleasedWhenClosed = false
             window.center()
@@ -280,6 +301,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.center()
         settingsWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow,
+              window.identifier?.rawValue == "settings" else { return }
+        DispatchQueue.main.async { [weak self] in self?.showLauncher() }
     }
 
     func windowDidResignKey(_ notification: Notification) {
