@@ -10,6 +10,7 @@ struct LauncherView: View {
     @State private var showingQuickMenu = false
     @State private var zoomStartFontSize: Double?
     @GestureState private var liveChatMagnification: CGFloat = 1
+    @Namespace private var tabSelectionAnimation
 
     var body: some View {
         VStack(spacing: 0) {
@@ -50,20 +51,57 @@ struct LauncherView: View {
                     }
                 }
                 .padding(.horizontal, 28)
-                .frame(height: 64)
+                .frame(height: 56)
 
                 HStack {
                     Spacer(minLength: 20)
-                    Picker("Mode", selection: $model.mode) {
-                        ForEach(LauncherMode.allCases) { Text($0.rawValue).tag($0) }
+                    HStack(spacing: 3) {
+                        ForEach(LauncherMode.allCases) { mode in
+                            Button {
+                                withAnimation(.spring(response: 0.34, dampingFraction: 0.84)) {
+                                    model.mode = mode
+                                }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: icon(for: mode))
+                                        .font(.system(size: 12, weight: .semibold))
+                                    Text(mode.rawValue)
+                                        .font(.system(size: 12.5, weight: .medium))
+                                        .fixedSize(horizontal: true, vertical: false)
+                                }
+                                .foregroundStyle(model.mode == mode ? model.settings.theme.primaryText : model.settings.theme.secondaryText)
+                                .padding(.horizontal, 11)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 32)
+                                .contentShape(Capsule())
+                                .background {
+                                    if model.mode == mode {
+                                        Capsule(style: .continuous)
+                                            .fill(.ultraThinMaterial)
+                                            .overlay {
+                                                Capsule(style: .continuous)
+                                                    .fill(Color.white.opacity(0.24))
+                                            }
+                                            .overlay {
+                                                Capsule(style: .continuous)
+                                                    .stroke(Color.white.opacity(0.48), lineWidth: 0.8)
+                                            }
+                                            .shadow(color: .black.opacity(0.10), radius: 2, y: 1)
+                                            .matchedGeometryEffect(id: "active-launcher-tab", in: tabSelectionAnimation)
+                                    }
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityAddTraits(model.mode == mode ? .isSelected : [])
+                        }
                     }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-                    .frame(width: 470)
+                    .padding(4)
+                    .frame(width: 660, height: 40)
+                    .animation(.spring(response: 0.34, dampingFraction: 0.84), value: model.mode)
                     Spacer(minLength: 20)
                 }
-                .frame(height: 38)
-                .padding(.bottom, 4)
+                .frame(height: 40)
+                .padding(.bottom, 14)
 
                 if model.mode == .files && !model.availableFormatFilters.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -153,7 +191,11 @@ struct LauncherView: View {
     }
 
     private var modeIcon: String {
-        switch model.mode {
+        icon(for: model.mode)
+    }
+
+    private func icon(for mode: LauncherMode) -> String {
+        switch mode {
         case .files: return "magnifyingglass"
         case .browser: return "folder"
         case .ask: return "sparkles"
@@ -650,9 +692,18 @@ struct LauncherView: View {
                         ForEach(model.imageResults) { result in
                             ImageGalleryTile(result: result) { model.selectedImageResult = result }
                                 .environmentObject(model)
+                                .onAppear {
+                                    if result.id == model.imageResults.last?.id {
+                                        model.loadMoreImagesIfNeeded()
+                                    }
+                                }
                         }
                     }
                     .padding(14)
+                    if model.isLoadingMoreImages {
+                        ProgressView("Loading more images…")
+                            .padding(.bottom, 16)
+                    }
                 }
             }
             if let result = model.selectedImageResult { imageActions(result) }
@@ -688,26 +739,7 @@ struct LauncherView: View {
 
     private func submit() {
         model.rememberCurrentSearch()
-        if model.mode == .files && model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            if model.recentSelection >= 0 { model.activateSelection() }
-            else { model.switchToAI() }
-        } else if model.mode == .files {
-            if !model.performAlfredStyleAction() { model.performPrimaryFileAction() }
-        }
-        else if model.mode == .browser {
-            model.activateBrowserSelection()
-        }
-        else if model.mode == .notes {
-            model.advanceNoteFind()
-        } else if model.mode == .google {
-            model.submitGoogleSearch()
-        } else if model.mode == .images {
-            model.submitImageSearch()
-        } else if model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            model.switchToMacSearch()
-        } else {
-            Task { await model.sendQuestion() }
-        }
+        model.handleLauncherReturn(cycleDirection: 1)
     }
 
 }

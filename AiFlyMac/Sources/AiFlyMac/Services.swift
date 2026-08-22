@@ -16,9 +16,9 @@ enum WebSearchService {
         }
     }
 
-    static func googleCustomSearch(_ term: String, image: Bool, settings: AppSettings) async throws -> [WebSearchResult] {
+    static func googleCustomSearch(_ term: String, image: Bool, settings: AppSettings, page: Int = 1) async throws -> [WebSearchResult] {
         let serperKey = settings.serperAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !serperKey.isEmpty { return try await serperSearch(term, image: image, key: serperKey) }
+        if !serperKey.isEmpty { return try await serperSearch(term, image: image, key: serperKey, page: page) }
         let key = settings.googleSearchAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
         let engineID = settings.googleSearchEngineID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty, !engineID.isEmpty else { throw GoogleSearchError.missingCredentials }
@@ -28,7 +28,8 @@ enum WebSearchService {
             URLQueryItem(name: "cx", value: engineID),
             URLQueryItem(name: "q", value: term),
             URLQueryItem(name: "safe", value: "active"),
-            URLQueryItem(name: "num", value: "10")
+            URLQueryItem(name: "num", value: "10"),
+            URLQueryItem(name: "start", value: String(min(91, ((max(1, page) - 1) * 10) + 1)))
         ] + (image ? [URLQueryItem(name: "searchType", value: "image")] : [])
         guard let url = components?.url else { throw GoogleSearchError.api("Invalid request.") }
         let (data, response) = try await URLSession.shared.data(from: url)
@@ -54,7 +55,7 @@ enum WebSearchService {
         }
     }
 
-    private static func serperSearch(_ term: String, image: Bool, key: String) async throws -> [WebSearchResult] {
+    private static func serperSearch(_ term: String, image: Bool, key: String, page: Int) async throws -> [WebSearchResult] {
         guard let url = URL(string: "https://google.serper.dev/\(image ? "images" : "search")") else {
             throw GoogleSearchError.api("Invalid Serper request.")
         }
@@ -63,7 +64,7 @@ enum WebSearchService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(key, forHTTPHeaderField: "X-API-KEY")
         request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "q": term, "gl": "us", "hl": "en", "autocorrect": true
+            "q": term, "gl": "us", "hl": "en", "autocorrect": true, "page": max(1, page)
         ])
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {

@@ -43,15 +43,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self.showSettings()
                 return nil
             }
-            if event.keyCode == 49,
+            if (event.keyCode == 36 || event.keyCode == 76),
+               activeModifiers.contains(.shift),
                activeModifiers.intersection([.command, .option, .control]).isEmpty,
                launcher.firstResponder is NSTextView,
-               self.model.querySuggestionSuffix != nil {
-                self.model.acceptQuerySuggestion(addTrailingSpace: true)
+               !self.isInsideWebEditor(launcher.firstResponder) {
+                self.model.rememberCurrentSearch()
+                self.model.handleLauncherReturn(cycleDirection: -1)
                 NotificationCenter.default.post(name: .focusLauncher, object: nil)
                 return nil
             }
-
             if event.keyCode == 53 {
                 if self.model.webDialogResult != nil {
                     self.model.closeWebDialog()
@@ -75,9 +76,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 if [8, 15, 31, 36, 76, 51].contains(event.keyCode) { return nil }
             }
             if event.keyCode == 48 {
-                let backwards = event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.shift)
-                self.model.cycleLauncherMode(backwards ? -1 : 1)
-                NotificationCenter.default.post(name: .focusLauncher, object: nil)
+                if launcher.firstResponder is NSTextView,
+                   self.model.querySuggestionSuffix != nil {
+                    self.model.acceptQuerySuggestion(addTrailingSpace: true)
+                    NotificationCenter.default.post(name: .focusLauncher, object: nil)
+                }
                 return nil
             }
             let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
@@ -96,6 +99,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 && ((event.keyCode == 124 && selectedFolderCanOpen)
                     || (event.keyCode == 123 && self.model.searchRoot != nil))
             if self.model.mode == .browser {
+                if editingSearchField && (event.keyCode == 36 || event.keyCode == 76) { return event }
                 switch event.keyCode {
                 case 126: self.model.moveBrowserSelection(-1)
                 case 125: self.model.moveBrowserSelection(1)

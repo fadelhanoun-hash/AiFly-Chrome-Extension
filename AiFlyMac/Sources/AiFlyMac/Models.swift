@@ -405,6 +405,7 @@ final class AppModel: ObservableObject {
     @Published var selectedImageResult: WebSearchResult?
     @Published var imageSearchURL: URL?
     @Published var imageSearchFailed = false
+    @Published var isLoadingMoreImages = false
     @Published var querySuggestion: String?
     @Published var learnedTargetBonuses: [String: Int] = [:]
     var settings = AppSettings()
@@ -415,6 +416,8 @@ final class AppModel: ObservableObject {
     private var folderSearchTask: Task<Void, Never>?
     private var googleDriveSearchTask: Task<Void, Never>?
     private var webSearchTask: Task<Void, Never>?
+    private var imageSearchPage = 1
+    private var imageSearchHasMore = false
     private var suggestionTask: Task<Void, Never>?
     private var learningTask: Task<Void, Never>?
     private var folderHistory: [FileNavigationState] = []
@@ -430,6 +433,7 @@ final class AppModel: ObservableObject {
     private var searchHistoryIndex: Int?
     private var searchHistoryDraft = ""
     private var lastModeSubmittedAIQuery: String?
+    private var lastReturnSearchValue = ""
 
     init() {
         aiFontSize = settings.aiFontSize
@@ -529,6 +533,9 @@ final class AppModel: ObservableObject {
                 selectedImageResult = nil
                 imageSearchURL = nil
                 imageSearchFailed = false
+                imageSearchPage = 1
+                imageSearchHasMore = false
+                isLoadingMoreImages = false
                 querySuggestion = nil
             }
             return
@@ -675,7 +682,9 @@ final class AppModel: ObservableObject {
                 .map(MacSearchResult.web)
         }
         let standardFolders = visibleResults.filter { $0.isDirectory && $0.url.pathExtension.lowercased() != "app" }
-        let dedicatedFolders = searchRoot == nil && (selectedFormatFilter == nil || selectedFormatFilter == "Folder") ? folderResults : []
+        let dedicatedFolders = searchRoot == nil && (selectedFormatFilter == nil || selectedFormatFilter == "Folder")
+            ? folderResults.filter { $0.isDirectory && $0.url.pathExtension.lowercased() != "app" }
+            : []
         var seenFolderPaths = Set<String>()
         let folders = (dedicatedFolders + standardFolders)
             .filter { seenFolderPaths.insert($0.url.standardizedFileURL.path).inserted }
@@ -684,7 +693,10 @@ final class AppModel: ObservableObject {
             ? contactResults.filter { matchesContactName($0, query: query) }.map(MacSearchResult.contact)
             : []
         let applications = searchRoot == nil && (selectedFormatFilter == nil || selectedFormatFilter == "Application")
-            ? applicationResults.filter { matchesDisplayedName($0.url.deletingPathExtension().lastPathComponent, query: query) }.map(MacSearchResult.file)
+            ? applicationResults.filter {
+                $0.url.pathExtension.lowercased() == "app"
+                    && matchesDisplayedName($0.url.deletingPathExtension().lastPathComponent, query: query)
+            }.map(MacSearchResult.file)
             : []
         let applicationPaths = Set(applicationResults.map { $0.url.standardizedFileURL.path })
         let files = visibleResults.filter {
@@ -711,7 +723,7 @@ final class AppModel: ObservableObject {
         }.map(MacSearchResult.web)
         let ordered = applications + folders + contacts + system + remoteDrive + files
         let term = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if ordered.isEmpty, !term.isEmpty, searchRoot == nil {
+        if ordered.isEmpty, !term.isEmpty, searchRoot == nil, selectedFormatFilter == nil {
             return fallbackWebResults(for: term).map(MacSearchResult.web)
         }
         guard !term.isEmpty, ordered.count > 1 else { return ordered }
@@ -953,6 +965,16 @@ final class AppModel: ObservableObject {
         rememberLauncherMode()
     }
 
+    func handleLauncherReturn(cycleDirection: Int) {
+        let currentValue = query
+        if currentValue != lastReturnSearchValue {
+            lastReturnSearchValue = currentValue
+            performCurrentModeCommand()
+        } else {
+            cycleLauncherMode(cycleDirection)
+        }
+    }
+
     func performCurrentModeCommand() {
         let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !term.isEmpty else {
@@ -1162,22 +1184,55 @@ final class AppModel: ObservableObject {
         imageResults = []
         selectedImageResult = nil
         imageSearchFailed = false
+        imageSearchPage = 1
+        imageSearchHasMore = false
+        isLoadingMoreImages = false
         imageSearchURL = nil
         webSearchTask?.cancel()
         webSearchTask = Task {
             do {
-                let matches = try await WebSearchService.googleCustomSearch(term, image: true, settings: settings)
+                let matches = try await WebSearchService.googleCustomSearch(term, image: true, settings: settings, page: 1)
                 guard !Task.isCancelled, mode == .images, query.trimmingCharacters(in: .whitespacesAndNewlines) == term else { return }
                 imageResults = matches
                 imageSearchFailed = matches.isEmpty
+                imageSearchHasMore = !matches.isEmpty
             } catch {
                 let fallback = await WebSearchService.googleImages(term)
                 guard !Task.isCancelled, mode == .images, query.trimmingCharacters(in: .whitespacesAndNewlines) == term else { return }
                 imageResults = fallback
                 imageSearchFailed = fallback.isEmpty
+                imageSearchHasMore = !fallback.isEmpty
                 errorMessage = fallback.isEmpty ? error.localizedDescription : nil
             }
             isSearchingWeb = false
+        }
+    }
+
+    func loadMoreImagesIfNeeded() {
+        let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard mode == .images, !term.isEmpty, imageSearchHasMore,
+              !isSearchingWeb, !isLoadingMoreImages else { return }
+        let nextPage = imageSearchPage + 1
+        isLoadingMoreImages = true
+        Task {
+            do {
+                let matches = try await WebSearchService.googleCustomSearch(
+                    term, image: true, settings: settings, page: nextPage
+                )
+                guard !Task.isCancelled, mode == .images,
+                      query.trimmingCharacters(in: .whitespacesAndNewlines) == term else {
+                    isLoadingMoreImages = false
+                    return
+                }
+                let existing = Set(imageResults.map(\.id))
+                let additions = matches.filter { !existing.contains($0.id) }
+                imageResults.append(contentsOf: additions)
+                imageSearchPage = nextPage
+                imageSearchHasMore = !matches.isEmpty && !additions.isEmpty
+            } catch {
+                imageSearchHasMore = false
+            }
+            isLoadingMoreImages = false
         }
     }
 
@@ -1207,7 +1262,11 @@ final class AppModel: ObservableObject {
 
     func acceptQuerySuggestion(addTrailingSpace: Bool = false) {
         guard let querySuggestion else { return }
-        query = querySuggestion + (addTrailingSpace ? " " : "")
+        acceptQuerySuggestion(querySuggestion, addTrailingSpace: addTrailingSpace)
+    }
+
+    func acceptQuerySuggestion(_ suggestion: String, addTrailingSpace: Bool = false) {
+        query = suggestion + (addTrailingSpace ? " " : "")
         self.querySuggestion = nil
     }
 
