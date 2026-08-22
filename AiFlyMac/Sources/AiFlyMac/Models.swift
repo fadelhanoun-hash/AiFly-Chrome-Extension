@@ -1493,26 +1493,25 @@ final class AppModel: ObservableObject {
     }
 
     func enterFolder(_ folder: URL) {
-        guard FileResult(url: folder).isDirectory else { return }
-        rememberChoice(.file(FileResult(url: folder)))
-        folderHistory.append(FileNavigationState(
-            query: query,
-            results: results,
-            selection: selection,
-            formatFilter: selectedFormatFilter,
-            searchRoot: searchRoot
-        ))
+        let item = FileResult(url: folder)
+        guard item.isDirectory || GoogleDriveCatalogBrowser.isGoogleDriveURL(folder) else { return }
+        rememberChoice(.file(item))
+        searchTask?.cancel()
+        searchGeneration = UUID()
         pendingRestoredSelection = nil
         pendingRestoredFilter = nil
-        searchRoot = folder
+        searchRoot = nil
         results = []
         folderResults = []
         applicationResults = []
         contactResults = []
         query = ""
         selection = 0
+        selectedFormatFilter = nil
+        hasActivatedResultPreview = false
         showFileActions = false
-        updateSearch()
+        openBrowserFavorite(folder)
+        mode = .browser
     }
 
     func leaveCurrentFolder() {
@@ -1816,7 +1815,7 @@ final class AppModel: ObservableObject {
     func focusGoogleDriveFolder(_ result: WebSearchResult) {
         guard result.engineID == "google_drive_folder" else { return }
         rememberChoice(.web(result))
-        guard let localURL = googleDriveLocalURL(for: result) else {
+        guard let localURL = googleDriveLocalURL(for: result, allowCloudOnly: true) else {
             errorMessage = "Google Drive has not exposed this folder to Finder yet."
             return
         }
