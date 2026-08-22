@@ -20,6 +20,15 @@ struct LauncherView: View {
                         .font(.system(size: 19, weight: .semibold))
                         .foregroundStyle(.secondary)
                     ZStack(alignment: .leading) {
+                        if model.query.isEmpty {
+                            Text(searchPlaceholder)
+                                .font(.system(size: 22))
+                                .foregroundStyle(model.settings.theme.secondaryText.opacity(0.72))
+                                .lineLimit(1)
+                                .allowsHitTesting(false)
+                                .id(model.mode)
+                                .transaction { transaction in transaction.animation = nil }
+                        }
                         if let suffix = model.querySuggestionSuffix {
                             HStack(spacing: 0) {
                                 Text(model.query).hidden()
@@ -29,7 +38,7 @@ struct LauncherView: View {
                             .lineLimit(1)
                             .allowsHitTesting(false)
                         }
-                        TextField(searchPlaceholder, text: $model.query)
+                        TextField("", text: $model.query)
                             .textFieldStyle(.plain)
                             .font(.system(size: 22))
                             .focused($searchFocused)
@@ -245,21 +254,34 @@ struct LauncherView: View {
                                     Text(column.folder.lastPathComponent).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                                         .frame(maxWidth: .infinity, alignment: .leading).padding(8)
                                     ForEach(Array(column.items.enumerated()), id: \.element.id) { index, item in
-                                        Button { model.selectBrowserItem(column: columnIndex, index: index, openFolder: item.isNavigableFolder) } label: {
-                                            HStack(spacing: 8) {
-                                                Image(nsImage: item.icon).resizable().scaledToFit().frame(width: 20, height: 20)
-                                                Text(item.name).lineLimit(1)
-                                                Spacer()
-                                                if item.isNavigableFolder { Image(systemName: "chevron.right").font(.caption) }
-                                            }
-                                            .padding(.horizontal, 8).frame(height: 34)
-                                            .background(columnIndex == model.browserActiveColumn && index == column.selection ? model.settings.theme.selection : .clear)
-                                        }.buttonStyle(.plain)
+                                        HStack(spacing: 8) {
+                                            Image(nsImage: item.icon).resizable().scaledToFit().frame(width: 20, height: 20)
+                                            Text(item.name).lineLimit(1)
+                                            Spacer()
+                                            if item.isNavigableFolder { Image(systemName: "chevron.right").font(.caption) }
+                                        }
+                                        .padding(.horizontal, 8).frame(height: 34)
+                                        .background(columnIndex == model.browserActiveColumn && index == column.selection ? model.settings.theme.selection : .clear)
+                                        .contentShape(Rectangle())
+                                        .onTapGesture(count: 2) {
+                                            model.selectBrowserItem(column: columnIndex, index: index)
+                                            model.openBrowserItemExternally(item)
+                                        }
+                                        .onTapGesture {
+                                            model.selectBrowserItem(column: columnIndex, index: index)
+                                        }
                                     }
                                 }.padding(6)
                             }
                             .frame(width: 230)
                             .id("browser-column-\(columnIndex)")
+                            Divider()
+                        }
+                        if let item = model.selectedBrowserItem, !item.isNavigableFolder {
+                            BrowserFilePreviewPanel(item: item)
+                                .environmentObject(model)
+                                .frame(width: 300)
+                                .id("browser-file-preview")
                             Divider()
                         }
                 }
@@ -270,11 +292,98 @@ struct LauncherView: View {
                     proxy.scrollTo(column < 0 ? "browser-favorites" : "browser-column-\(column)", anchor: column < 0 ? .leading : .trailing)
                 }
             }
+            .onChange(of: model.selectedBrowserItem?.id) { _ in
+                withAnimation(.easeOut(duration: 0.16)) {
+                    if let item = model.selectedBrowserItem, !item.isNavigableFolder {
+                        proxy.scrollTo("browser-file-preview", anchor: .trailing)
+                    } else if !model.browserColumns.isEmpty {
+                        proxy.scrollTo("browser-column-\(model.browserColumns.count - 1)", anchor: .trailing)
+                    }
+                }
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+}
+
+private struct BrowserFilePreviewPanel: View {
+    @EnvironmentObject private var model: AppModel
+    let item: FileResult
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Preview")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(model.settings.theme.secondaryText)
+                Spacer()
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 38)
+
+            Group {
+                if FileManager.default.fileExists(atPath: item.url.path) {
+                    QuickLookPreview(url: item.url)
+                } else {
+                    VStack(spacing: 12) {
+                        Image(nsImage: item.icon)
+                            .resizable().scaledToFit().frame(width: 84, height: 84)
+                        Text("Available in Google Drive")
+                            .font(.caption).foregroundStyle(model.settings.theme.secondaryText)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 265)
+            .background(model.settings.theme.cardSurface)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(model.settings.theme.primaryText.opacity(0.08), lineWidth: 1)
+            }
+            .padding(.horizontal, 12)
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(item.name).font(.subheadline.weight(.semibold)).lineLimit(2)
+                Text(item.folder)
+                    .font(.caption).foregroundStyle(model.settings.theme.secondaryText).lineLimit(2)
+                if let detail = fileDetail {
+                    Text(detail).font(.caption2).foregroundStyle(model.settings.theme.secondaryText)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+
+            HStack(spacing: 8) {
+                Button("Open") { model.activateBrowserSelection() }
+                    .buttonStyle(.borderedProminent)
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
+                    .buttonStyle(.bordered)
+                Spacer()
+            }
+            .controlSize(.small)
+            .padding(.horizontal, 14)
+
+            Spacer(minLength: 12)
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(model.settings.theme.cardSurface.opacity(0.28))
     }
 
-    private func focusSearchField() {
+    private var fileDetail: String? {
+        guard let values = try? item.url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]) else { return nil }
+        var details: [String] = []
+        if let size = values.fileSize {
+            details.append(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))
+        }
+        if let date = values.contentModificationDate {
+            details.append(date.formatted(date: .abbreviated, time: .shortened))
+        }
+        return details.isEmpty ? nil : details.joined(separator: " | ")
+    }
+}
+
+private func focusSearchField() {
         searchFocused = false
         DispatchQueue.main.async { searchFocused = true }
     }

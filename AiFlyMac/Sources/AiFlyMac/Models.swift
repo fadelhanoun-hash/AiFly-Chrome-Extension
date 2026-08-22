@@ -1015,11 +1015,24 @@ final class AppModel: ObservableObject {
             let favorites = starredBrowserFolders
             guard !favorites.isEmpty else { return }
             browserFavoriteSelection = (browserFavoriteSelection + offset + favorites.count) % favorites.count
+            let folder = favorites[browserFavoriteSelection]
+            browserColumns = [makeBrowserColumn(folder)]
+            refreshCloudBrowserColumn(at: 0)
             return
         }
         guard browserColumns.indices.contains(browserActiveColumn), !browserColumns[browserActiveColumn].items.isEmpty else { return }
         let count = browserColumns[browserActiveColumn].items.count
         browserColumns[browserActiveColumn].selection = (browserColumns[browserActiveColumn].selection + offset + count) % count
+        revealSelectedBrowserFolderInNextColumn()
+    }
+
+    private func revealSelectedBrowserFolderInNextColumn() {
+        guard browserColumns.indices.contains(browserActiveColumn) else { return }
+        let parentColumn = browserActiveColumn
+        browserColumns = Array(browserColumns.prefix(parentColumn + 1))
+        guard let item = selectedBrowserItem, item.isNavigableFolder else { return }
+        browserColumns.append(makeBrowserColumn(item.url))
+        refreshCloudBrowserColumn(at: parentColumn + 1)
     }
 
     func browserMoveRight() {
@@ -1067,6 +1080,18 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func openBrowserItemExternally(_ item: FileResult) {
+        if item.isNavigableFolder {
+            NSWorkspace.shared.open(item.url)
+        } else if item.isGoogleDriveItem && item.isMediaFile {
+            materializeAndOpenGoogleDriveMedia(item.url)
+        } else {
+            let openURL = FileManager.default.fileExists(atPath: item.url.path) ? item.url : (item.remoteURL ?? item.url)
+            NSWorkspace.shared.open(openURL)
+        }
+        NSApp.keyWindow?.orderOut(nil)
+    }
+
     var selectedBrowserItem: FileResult? {
         guard browserColumns.indices.contains(browserActiveColumn) else { return nil }
         let column = browserColumns[browserActiveColumn]
@@ -1078,7 +1103,11 @@ final class AppModel: ObservableObject {
         browserActiveColumn = column
         browserColumns[column].selection = index
         browserColumns = Array(browserColumns.prefix(column + 1))
-        if openFolder, browserColumns[column].items[index].isNavigableFolder { browserMoveRight() }
+        if openFolder, browserColumns[column].items[index].isNavigableFolder {
+            browserMoveRight()
+        } else {
+            revealSelectedBrowserFolderInNextColumn()
+        }
     }
 
     private func refreshBrowserColumn() {
